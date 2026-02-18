@@ -12,53 +12,52 @@ let latestState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0,
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
 
-// Include Homebrew paths so tmux/wezterm are found regardless of shell env
 const sysEnv = {
   ...process.env,
-  PATH: [
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    process.env.PATH || ''
-  ].join(':')
+  PATH: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(':')
 };
 
-function runFile(file, args = []) {
+// ── WezTerm binary detection ──────────────────────────────────────────────
+const WEZTERM_CANDIDATES = [
+  '/Applications/WezTerm.app/Contents/MacOS/wezterm',
+  '/opt/homebrew/bin/wezterm',
+  '/usr/local/bin/wezterm'
+];
+const weztermBin = WEZTERM_CANDIDATES.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function runFile(file, args = [], silent = false) {
   return new Promise((resolve) => {
     execFile(file, args, { timeout: 4000, env: sysEnv }, (error, stdout, stderr) => {
-      if (error) console.error(`runFile ${file}:`, error.message);
-      resolve({ error, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
+      if (error && !silent) console.error(`[helm] ${path.basename(file)} ${args[0] || ''}:`, error.message);
+      resolve({ ok: !error, error, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
     });
   });
 }
 
-function ensureNamesFile() {
+function ensureDir() {
   try {
     if (!fs.existsSync(helmDir)) fs.mkdirSync(helmDir, { recursive: true });
     if (!fs.existsSync(namesFile)) fs.writeFileSync(namesFile, '{}\n', 'utf8');
-  } catch (e) {
-    console.error('Failed to initialize names file:', e.message);
-  }
+  } catch (e) { console.error('[helm] ensureDir:', e.message); }
 }
 
-function saveSessionName(sessionName, name) {
-  ensureNamesFile();
-  try {
-    const current = JSON.parse(fs.readFileSync(namesFile, 'utf8') || '{}');
-    current[sessionName] = name;
-    fs.writeFileSync(namesFile, JSON.stringify(current, null, 2), 'utf8');
-  } catch (e) {
-    console.error('Failed to save session name:', e.message);
-  }
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8') || '{}'); } catch { return {}; }
 }
 
+function writeJson(file, data) {
+  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); } catch (e) { console.error('[helm] writeJson:', e.message); }
+}
+
+// ── Window ────────────────────────────────────────────────────────────────
 function createWindow() {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - 740) / 2);
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = 740;
+  const x = Math.round(workArea.x + (workArea.width - width) / 2);
 
   win = new BrowserWindow({
-    width: 740,
+    width,
     height: 52,
     x,
     y: 0,
@@ -69,6 +68,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     show: false,
+    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -76,13 +76,20 @@ function createWindow() {
     }
   });
 
-  win.setAlwaysOnTop(true, 'pop-up-menu', 1);
+  // screen-saver is the highest level in Electron on macOS
+  win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-  // Re-assert always-on-top whenever any window gets focus (some apps steal it)
-  app.on('browser-window-blur', () => {
-    if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'pop-up-menu', 1);
+  // Re-assert when window loses focus (Aerospace / other WMs can steal z-order)
+  win.on('blur', () => {
+    if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
   });
+
+  // Periodic re-assert every 2s — ensures overlay survives workspace switches
+  setInterval(() => {
+    if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
+  }, 2000);
+
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
   win.once('ready-to-show', () => {
@@ -91,98 +98,84 @@ function createWindow() {
   });
 }
 
+// ── Daemon WebSocket ──────────────────────────────────────────────────────
 function connectDaemon() {
-  if (daemonSocket) {
-    try { daemonSocket.terminate(); } catch {}
-  }
+  if (daemonSocket) { try { daemonSocket.terminate(); } catch {} }
 
   daemonSocket = new WebSocket('ws://127.0.0.1:7373');
-  daemonSocket.on('message', (message) => {
+  daemonSocket.on('message', (msg) => {
     try {
-      latestState = JSON.parse(message.toString());
+      latestState = JSON.parse(msg.toString());
       if (win && !win.isDestroyed()) win.webContents.send('state-update', latestState);
-    } catch (e) {
-      console.error('Invalid daemon payload:', e.message);
-    }
+    } catch (e) { console.error('[helm] ws parse:', e.message); }
   });
-
   daemonSocket.on('close', () => setTimeout(connectDaemon, 2500));
   daemonSocket.on('error', () => setTimeout(connectDaemon, 2500));
 }
 
+// ── App bootstrap ─────────────────────────────────────────────────────────
 app.setName('Helm');
 
 app.whenReady().then(() => {
-  ensureNamesFile();
+  ensureDir();
   createWindow();
   connectDaemon();
-
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (win && !win.isDestroyed()) win.webContents.send('shortcut-fired');
   });
 });
 
-ipcMain.on('resize-window', (_event, height) => {
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (daemonSocket) { try { daemonSocket.terminate(); } catch {} }
+});
+
+app.on('window-all-closed', () => app.quit());
+
+// ── IPC handlers ──────────────────────────────────────────────────────────
+ipcMain.on('resize-window', (_e, height) => {
   if (!win || win.isDestroyed()) return;
+  const { workArea } = screen.getPrimaryDisplay();
   const width = 740;
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - width) / 2);
+  const x = Math.round(workArea.x + (workArea.width - width) / 2);
   const h = Math.max(52, Math.min(620, Number(height) || 52));
   win.setBounds({ x, y: 0, width, height: h }, true);
 });
 
-const WEZTERM_PATHS_MAIN = [
-  '/Applications/WezTerm.app/Contents/MacOS/wezterm',
-  '/opt/homebrew/bin/wezterm',
-  '/usr/local/bin/wezterm'
-];
-const weztermBinMain = WEZTERM_PATHS_MAIN.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || 'wezterm';
-
-ipcMain.on('navigate-to-pane', async (_event, sessionName, windowName, paneId, weztermTabId) => {
-  console.log('[helm] navigate:', { sessionName, windowName, paneId, weztermTabId });
-  if (weztermTabId) {
-    const r = await runFile(weztermBinMain, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)]);
-    if (r.error) console.log('[helm] wezterm activate-tab failed (non-fatal):', r.error.message);
-  }
-  if (sessionName && windowName) {
-    const r = await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
-    if (r.error) console.log('[helm] tmux select-window:', r.error.message);
-  }
-  if (paneId) {
-    const r = await runFile('tmux', ['select-pane', '-t', String(paneId)]);
-    if (r.error) console.log('[helm] tmux select-pane:', r.error.message);
-  }
-});
-
-ipcMain.on('save-front-order', (_event, order) => {
-  if (!Array.isArray(order)) return;
-  const orderFile = path.join(os.homedir(), '.helm', 'front-order.json');
-  try { fs.writeFileSync(orderFile, JSON.stringify(order, null, 2), 'utf8'); } catch (e) { console.error('save-front-order:', e.message); }
-});
-
-ipcMain.on('set-ignore-mouse', (_event, ignore) => {
+ipcMain.on('set-ignore-mouse', (_e, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
 });
 
-ipcMain.on('confirm-name', (_event, sessionName, name) => {
-  if (!sessionName || !name) return;
-  saveSessionName(sessionName, String(name).trim());
-  // Mark as confirmed so aiSuggested badge disappears
-  const confirmedFile = path.join(os.homedir(), '.helm', 'confirmed-names.json');
-  try {
-    const c = fs.existsSync(confirmedFile) ? JSON.parse(fs.readFileSync(confirmedFile, 'utf8') || '{}') : {};
-    c[sessionName] = true;
-    fs.writeFileSync(confirmedFile, JSON.stringify(c, null, 2), 'utf8');
-  } catch (e) { console.error('confirm-name write:', e.message); }
-});
+ipcMain.on('navigate-to-pane', async (_e, sessionName, windowName, paneId, weztermTabId) => {
+  console.log('[helm] navigate →', sessionName, windowName, paneId, 'wez:', weztermTabId);
 
-ipcMain.handle('get-state', async () => latestState);
-
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-  if (daemonSocket) {
-    try { daemonSocket.terminate(); } catch {}
+  if (weztermTabId && weztermBin) {
+    const r = await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
+    if (!r.ok) console.log('[helm] wezterm activate-tab failed:', r.error?.message);
+  }
+  if (sessionName && windowName) {
+    await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
+  }
+  if (paneId) {
+    await runFile('tmux', ['select-pane', '-t', String(paneId)]);
   }
 });
 
-app.on('window-all-closed', () => app.quit());
+ipcMain.on('confirm-name', (_e, sessionName, name) => {
+  if (!sessionName || !name) return;
+  const names = readJson(namesFile);
+  names[sessionName] = String(name).trim();
+  writeJson(namesFile, names);
+
+  const confirmedFile = path.join(helmDir, 'confirmed-names.json');
+  const confirmed = readJson(confirmedFile);
+  confirmed[sessionName] = true;
+  writeJson(confirmedFile, confirmed);
+});
+
+ipcMain.on('save-front-order', (_e, order) => {
+  if (!Array.isArray(order)) return;
+  writeJson(path.join(helmDir, 'front-order.json'), order);
+});
+
+ipcMain.handle('get-state', () => latestState);

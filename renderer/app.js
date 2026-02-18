@@ -15,15 +15,13 @@ const frontsEl = $('fronts');
 pill.addEventListener('click', () => togglePanel());
 pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
 
-// Hover tracking: libera mouse events só quando está sobre a UI, ignora no resto
-document.addEventListener('mousemove', (e) => {
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const overUI = el && (el.closest('.pill') || el.closest('.panel'));
-  window.helm.setIgnoreMouse(!overUI);
-});
-document.addEventListener('mouseleave', () => {
-  window.helm.setIgnoreMouse(true);
-});
+// Hover tracking: capture mouse only when over interactive UI, pass-through otherwise
+// Using pointerenter/leave on the HUD container is more reliable than mousemove+elementFromPoint
+const hudEl = document.querySelector('.hud');
+hudEl.addEventListener('pointerenter', () => window.helm.setIgnoreMouse(false));
+hudEl.addEventListener('pointerleave', () => window.helm.setIgnoreMouse(true));
+// Fallback: also reset on document leave
+document.addEventListener('mouseleave', () => window.helm.setIgnoreMouse(true));
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) {
@@ -110,7 +108,8 @@ function agentTag(command) {
 
 function render() {
   const waiting = state.data.summary?.waiting || 0;
-  $('pill-text').textContent = `${waiting} aguardando`;
+  $('pill-text').textContent = waiting > 0 ? `${waiting} aguardando` : 'tudo rodando';
+  pill.className = waiting > 0 ? 'pill' : 'pill all-ok';
 
   const dots = [];
   const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
