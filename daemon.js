@@ -371,6 +371,35 @@ async function tick() {
   }
 }
 
+// Debug HTTP server — GET /debug shows raw pane captures + detection results
+const http = require('http');
+http.createServer(async (req, res) => {
+  if (req.url !== '/debug') { res.writeHead(404); res.end(); return; }
+  const panes = await listTmuxPanes();
+  if (!panes) { res.writeHead(200); res.end('no tmux panes\n'); return; }
+  const lines = [];
+  for (const p of panes) {
+    const output = await capturePane(p.paneId);
+    const allLines = output.split('\n');
+    const lastLine = allLines[allLines.length - 1] || '';
+    const cleanLast = stripAnsi(lastLine).trim();
+    const wait = isWaitPrompt(lastLine);
+    const runInd = hasRunIndicator(allLines.slice(-4));
+    lines.push(`\n=== ${p.sessionName}:${p.windowName} pane=${p.paneId} cmd=${p.command} ===`);
+    lines.push(`lastLine (raw): ${JSON.stringify(lastLine)}`);
+    lines.push(`lastLine (clean): ${JSON.stringify(cleanLast)}`);
+    lines.push(`isWaitPrompt: ${wait}`);
+    lines.push(`hasRunIndicator: ${runInd}`);
+    lines.push(`isAgent: ${AGENT_COMMANDS.has(p.command.toLowerCase())}`);
+    lines.push(`isIgnored: ${IGNORE_COMMANDS.has(p.command.toLowerCase())}`);
+    lines.push(`--- last 5 lines ---`);
+    allLines.slice(-5).forEach((l, i) => lines.push(`  ${i}: ${JSON.stringify(l)}`));
+  }
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end(lines.join('\n') + '\n');
+}).listen(7374, '127.0.0.1');
+console.log('Debug endpoint: http://127.0.0.1:7374/debug');
+
 ensureFiles();
 setInterval(tick, POLL_MS);
 tick();
