@@ -4,21 +4,18 @@ const state = {
   selectedPane: null,
   inlineEditSession: null,
   shortcutMode: false,
-  frontOrder: [],    // persists user-defined order
-  openFronts: new Set()  // per-front open state (survives re-renders)
+  frontOrder: [],
+  openFronts: new Set()
 };
 
 const $ = (id) => document.getElementById(id);
-const pill  = $('pill');
-const panel = $('panel');
+const pill     = $('pill');
+const panel    = $('panel');
 const frontsEl = $('fronts');
 
-pill.addEventListener('click', () => togglePanel());
-pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
-
-// Hover tracking: toggle ignoreMouseEvents based on cursor position.
-// Only send IPC when state actually changes (avoids spamming main process on every mousemove).
-// sendSync ensures the cursor switches in the same frame with no async lag.
+// ── Mouse passthrough ─────────────────────────────────────────────────────
+// sendSync ensures cursor switches in same frame (no async lag).
+// State tracking avoids spamming IPC on every mousemove.
 let _ignoring = true;
 function setIgnoreIfChanged(ignore) {
   if (ignore === _ignoring) return;
@@ -32,10 +29,14 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mouseleave', () => setIgnoreIfChanged(true));
 
+// ── Events ────────────────────────────────────────────────────────────────
+
+pill.addEventListener('click', () => togglePanel());
+pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) {
-    navigateTo(state.selectedPane);
-  }
+  if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) navigateTo(state.selectedPane);
+  if (e.key === 'Escape' && state.open) togglePanel(false);
 });
 
 window.helm.onShortcutFired(() => {
@@ -43,23 +44,36 @@ window.helm.onShortcutFired(() => {
   if (!state.open) togglePanel(true);
   const oldest = state.data?.summary?.oldestWaiting;
   if (!oldest) return;
-
   for (const f of state.data.fronts) {
-    const ag = f.agents.find((a) => a.paneId === oldest.paneId);
-    if (ag) {
-      state.selectedPane = { ...ag, sessionName: f.sessionName, weztermTabId: f.weztermTabId };
-      break;
-    }
+    const ag = f.agents.find(a => a.paneId === oldest.paneId);
+    if (ag) { state.selectedPane = { ...ag, sessionName: f.sessionName, weztermTabId: f.weztermTabId }; break; }
   }
   render();
 });
 
 window.helm.onStateUpdate((next) => {
   if (!next) return;
+  applyFrontOrder(next);
+  state.data = next;
+  if (!state.inlineEditSession) render();
+});
 
-  // Apply user-defined order before rendering
-  if (state.frontOrder.length > 0 && next.fronts) {
-    next.fronts = [...next.fronts].sort((a, b) => {
+// Load initial state + persisted front order
+window.helm.getState().then((initial) => {
+  if (initial) { applyFrontOrder(initial); state.data = initial; }
+  render();
+}).catch(() => render());
+
+// Load front order from disk on startup
+window.helm.getFrontOrder().then((order) => {
+  if (Array.isArray(order) && order.length) state.frontOrder = order;
+}).catch(() => {});
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function applyFrontOrder(data) {
+  if (state.frontOrder.length > 0 && data.fronts) {
+    data.fronts = [...data.fronts].sort((a, b) => {
       const ai = state.frontOrder.indexOf(a.sessionName);
       const bi = state.frontOrder.indexOf(b.sessionName);
       if (ai === -1 && bi === -1) return 0;
@@ -68,21 +82,7 @@ window.helm.onStateUpdate((next) => {
       return ai - bi;
     });
   }
-
-  state.data = next;
-
-  // Don't re-render while user is editing a name — it would reset the input
-  if (state.inlineEditSession) return;
-
-  render();
-});
-
-window.helm.getState().then((initial) => {
-  if (initial) state.data = initial;
-  render();
-}).catch(() => render());
-
-// ── Helpers ──────────────────────────────────────────────────────────────
+}
 
 function togglePanel(force) {
   state.open = typeof force === 'boolean' ? force : !state.open;
@@ -92,16 +92,11 @@ function togglePanel(force) {
 }
 
 function resizeToContent() {
-  if (!state.open) {
-    window.helm.resizeWindow(52);
-    return;
-  }
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const h = Math.min(560, (panel.scrollHeight || 200) + 60);
-      window.helm.resizeWindow(h);
-    });
-  });
+  if (!state.open) { window.helm.resizeWindow(52); return; }
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const h = Math.min(560, (panel.scrollHeight || 200) + 60);
+    window.helm.resizeWindow(h);
+  }));
 }
 
 function navigateTo(agent) {
@@ -111,40 +106,25 @@ function navigateTo(agent) {
 }
 
 function agentTag(command) {
-  const c = String(command || '').toLowerCase();
-  if (c.includes('codex')) return 'codex';
-  return 'claude';
+  return String(command || '').toLowerCase().includes('codex') ? 'codex' : 'claude';
 }
 
-function cls(el, name, on) {
-  on ? el.classList.add(name) : el.classList.remove(name);
-}
-
-function setText(el, text) {
-  if (el && el.textContent !== text) el.textContent = text;
-}
+function cls(el, name, on) { on ? el.classList.add(name) : el.classList.remove(name); }
+function setText(el, text) { if (el && el.textContent !== text) el.textContent = text; }
 
 function escapeHtml(text) {
-  return String(text || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+  return String(text || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 // ── Main render ───────────────────────────────────────────────────────────
-// Reconciliation approach: never wipe the DOM, only patch what changed.
-// This eliminates flicker from complete re-renders on every daemon poll.
 
 function render() {
   const waiting = state.data.summary?.waiting || 0;
 
-  // Pill label + class
   setText($('pill-text'), waiting > 0 ? `${waiting} aguardando` : 'tudo rodando');
   pill.className = waiting > 0 ? 'pill' : 'pill all-ok';
 
-  // Pill dots (small, OK to rebuild)
+  // Pill dots
   const dots = [];
   const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
   const waitCount = Math.min(2, waiting);
@@ -152,60 +132,53 @@ function render() {
   for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
   $('pill-dots').innerHTML = dots.join('');
 
-  setText($('sum-fronts'), state.data.summary?.total || 0);
-  setText($('sum-agents'), state.data.summary?.totalAgents || 0);
-  setText($('sum-waiting'), waiting);
-
+  setText($('sum-fronts'), String(state.data.summary?.total || 0));
+  setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
+  setText($('sum-waiting'), String(waiting));
   $('shortcut-hint').hidden = !state.shortcutMode;
 
-  patchFronts();
+  reconcileFronts();
 }
 
 // ── Fronts reconciler ─────────────────────────────────────────────────────
 
-function patchFronts() {
+function reconcileFronts() {
   const fronts = state.data.fronts || [];
 
-  // Index existing elements by session name
+  // Index existing elements
   const bySession = new Map();
   for (const el of Array.from(frontsEl.children)) {
     if (el.dataset.session) bySession.set(el.dataset.session, el);
   }
 
-  // Remove fronts that disappeared from state
+  // Remove stale
   for (const [name, el] of bySession) {
-    if (!fronts.find(f => f.sessionName === name)) {
-      el.remove();
-      bySession.delete(name);
-    }
+    if (!fronts.find(f => f.sessionName === name)) { el.remove(); bySession.delete(name); }
   }
 
-  // Update or create each front in correct order
+  // Update or create in order
   fronts.forEach((front, idx) => {
     let el = bySession.get(front.sessionName);
     if (!el) {
-      el = buildFrontEl(front);
+      el = createFrontEl(front);
       bySession.set(front.sessionName, el);
     } else {
       patchFrontEl(el, front);
     }
-    // Reorder DOM node if needed (cheap if already in place)
-    const atIdx = frontsEl.children[idx];
-    if (atIdx !== el) frontsEl.insertBefore(el, atIdx || null);
+    if (frontsEl.children[idx] !== el) frontsEl.insertBefore(el, frontsEl.children[idx] || null);
   });
 }
 
-function buildFrontEl(front) {
+function createFrontEl(front) {
   const el = document.createElement('div');
   el.dataset.session = front.sessionName;
-
-  // Restore open state from persistent set
   if (state.openFronts.has(front.sessionName)) el.classList.add('open');
 
-  // Front header HTML (rebuilt only when element is new)
-  const waitInFront = front.agents.filter(a => a.status === 'waiting').length;
-  const runInFront  = front.agents.filter(a => a.status === 'running').length;
-  el.className = buildFrontClass(front, waitInFront);
+  const wait = front.agents.filter(a => a.status === 'waiting').length;
+  const run  = front.agents.filter(a => a.status === 'running').length;
+
+  el.className = frontClasses(wait) + (state.openFronts.has(front.sessionName) ? ' open' : '');
+  el.setAttribute('draggable', 'true');
 
   el.innerHTML = `
     <div class="front-head">
@@ -216,9 +189,9 @@ function buildFrontEl(front) {
         <button class="name-btn" data-action="edit">editar</button>
       </div>
       <div class="fagents-summary">
-        <div class="fas-dot ${waitInFront ? 'wait' : 'run'}" style="${waitInFront ? '' : 'display:none'}"></div>
-        <div class="fas-dot run" style="${runInFront ? '' : 'display:none'}"></div>
-        <span class="fas-count ${waitInFront ? 'alert' : ''}">${waitInFront} aguardando · ${runInFront} rodando</span>
+        ${wait ? '<div class="fas-dot wait"></div>' : ''}
+        ${run  ? '<div class="fas-dot run"></div>' : ''}
+        <span class="fas-count ${wait ? 'alert' : ''}">${wait} aguardando · ${run} rodando</span>
       </div>
     </div>
     <div class="fdiv"></div>
@@ -226,117 +199,71 @@ function buildFrontEl(front) {
   `;
 
   attachFrontEvents(el, front);
-  patchAgentRows(el.querySelector('.agents'), front);
+  reconcileAgentRows(el.querySelector('.agents'), front);
   return el;
 }
 
 function patchFrontEl(el, front) {
-  const waitInFront = front.agents.filter(a => a.status === 'waiting').length;
-  const runInFront  = front.agents.filter(a => a.status === 'running').length;
-  const isSelected  = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane.paneId);
-
-  // Update classes (preserve 'open' — it's managed by click events + openFronts set)
+  const wait = front.agents.filter(a => a.status === 'waiting').length;
+  const run  = front.agents.filter(a => a.status === 'running').length;
   const isOpen = el.classList.contains('open');
-  el.className = buildFrontClass(front, waitInFront) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
+  const isSelected = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane?.paneId);
 
-  // Summary line
+  el.className = frontClasses(wait) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
+
+  // Summary
   const fasCount = el.querySelector('.fas-count');
   if (fasCount) {
-    const newText = `${waitInFront} aguardando · ${runInFront} rodando`;
-    setText(fasCount, newText);
-    cls(fasCount, 'alert', waitInFront > 0);
+    setText(fasCount, `${wait} aguardando · ${run} rodando`);
+    cls(fasCount, 'alert', wait > 0);
   }
 
-  // Name (only when not editing)
+  // Update summary dots
+  const summary = el.querySelector('.fagents-summary');
+  if (summary) {
+    const dots = summary.querySelectorAll('.fas-dot');
+    // Simple approach: rebuild dots only if count changed
+    const hasWaitDot = Array.from(dots).some(d => d.classList.contains('wait'));
+    const hasRunDot  = Array.from(dots).some(d => d.classList.contains('run'));
+    if ((wait > 0) !== hasWaitDot || (run > 0) !== hasRunDot) {
+      // Remove old dots
+      dots.forEach(d => d.remove());
+      // Insert before fas-count
+      if (wait > 0) { const d = document.createElement('div'); d.className = 'fas-dot wait'; summary.insertBefore(d, fasCount); }
+      if (run > 0)  { const d = document.createElement('div'); d.className = 'fas-dot run';  summary.insertBefore(d, fasCount); }
+    }
+  }
+
+  // Name (skip during inline edit)
   if (state.inlineEditSession !== front.sessionName) {
-    // If we're switching FROM edit mode back to normal, rebuild the fh-row
     const hasInput = !!el.querySelector('.fname-input');
     if (hasInput) {
-      rebuildFhRow(el, front);
+      rebuildNameRow(el, front);
     } else {
-      const fname = el.querySelector('.fname');
-      if (fname) setText(fname, front.name || front.sessionName);
-
-      // aiSuggested badge: add/remove without full rebuild
-      const hasConfirmBtn = !!el.querySelector('[data-action="confirm"]');
-      if (front.aiSuggested && !hasConfirmBtn) rebuildFhRow(el, front);
-      if (!front.aiSuggested && hasConfirmBtn)  rebuildFhRow(el, front);
+      setText(el.querySelector('.fname'), front.name || front.sessionName);
+      const hasConfirm = !!el.querySelector('[data-action="confirm"]');
+      if (front.aiSuggested !== hasConfirm) rebuildNameRow(el, front);
     }
   }
 
-  // Agents
-  patchAgentRows(el.querySelector('.agents'), front);
+  reconcileAgentRows(el.querySelector('.agents'), front);
 }
 
-function buildFrontClass(front, waitInFront) {
-  return `front ${waitInFront > 0 ? 'has-wait' : 'all-run'}`;
+function frontClasses(waitCount) {
+  return `front ${waitCount > 0 ? 'has-wait' : 'all-run'}`;
 }
 
-function rebuildFhRow(el, front) {
-  const fhRow = el.querySelector('.fh-row');
-  if (!fhRow) return;
-  const displayName = front.name || front.sessionName;
-
-  if (state.inlineEditSession === front.sessionName) {
-    fhRow.innerHTML = `
-      <span class="drag-handle" draggable="false">⠿</span>
-      <div class="fname-edit">
-        <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
-        <button class="name-btn ok" data-action="save">✓ ok</button>
-      </div>
-    `;
-    const inputEl = fhRow.querySelector('.fname-input');
-    const saveBtn = fhRow.querySelector('[data-action="save"]');
-    if (inputEl) {
-      inputEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
-        if (e.key === 'Enter')  { e.stopPropagation(); saveBtn && saveBtn.click(); }
-      });
-      setTimeout(() => inputEl.focus(), 0);
-    }
-    if (saveBtn) saveBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const input = el.querySelector('.fname-input');
-      const name = input ? input.value.trim() || front.sessionName : front.sessionName;
-      const f = state.data.fronts.find(x => x.sessionName === front.sessionName);
-      if (f) { f.name = name; f.aiSuggested = false; }
-      window.helm.confirmName(front.sessionName, name);
-      state.inlineEditSession = null;
-      render();
-    });
-  } else {
-    fhRow.innerHTML = `
-      <span class="drag-handle" draggable="false">⠿</span>
-      <span class="fname">${escapeHtml(displayName)}</span>
-      ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
-      <button class="name-btn" data-action="edit">editar</button>
-    `;
-    const editBtn = fhRow.querySelector('[data-action="edit"]');
-    if (editBtn) editBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.inlineEditSession = front.sessionName;
-      rebuildFhRow(el, front);
-    });
-    const confirmBtn = fhRow.querySelector('[data-action="confirm"]');
-    if (confirmBtn) confirmBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      window.helm.confirmName(front.sessionName, front.name || front.sessionName);
-    });
-  }
-}
+// ── Front events (attached once) ──────────────────────────────────────────
 
 function attachFrontEvents(el, front) {
-  // Drag-to-reorder
-  let dragSrc = null;
-  el.setAttribute('draggable', 'true');
+  // Drag
   el.addEventListener('dragstart', (e) => {
-    dragSrc = el;
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
   el.addEventListener('dragend', () => {
     el.classList.remove('dragging');
-    document.querySelectorAll('.front').forEach(f => f.classList.remove('drag-over'));
+    document.querySelectorAll('.front.drag-over').forEach(f => f.classList.remove('drag-over'));
   });
   el.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -350,73 +277,118 @@ function attachFrontEvents(el, front) {
     const src = document.querySelector('.front.dragging');
     if (!src || src === el) return;
     const fronts = state.data.fronts;
-    const fromIdx = fronts.findIndex(f => f.sessionName === src.dataset.session);
-    const toIdx   = fronts.findIndex(f => f.sessionName === el.dataset.session);
-    if (fromIdx !== -1 && toIdx !== -1) {
-      const [moved] = fronts.splice(fromIdx, 1);
-      fronts.splice(toIdx, 0, moved);
+    const from = fronts.findIndex(f => f.sessionName === src.dataset.session);
+    const to   = fronts.findIndex(f => f.sessionName === el.dataset.session);
+    if (from !== -1 && to !== -1) {
+      const [moved] = fronts.splice(from, 1);
+      fronts.splice(to, 0, moved);
       state.frontOrder = fronts.map(f => f.sessionName);
       window.helm.saveFrontOrder(state.frontOrder);
-      patchFronts();
+      reconcileFronts();
     }
   });
 
-  // Toggle open/close on header click
+  // Toggle open on header click
   el.querySelector('.front-head').addEventListener('click', (e) => {
     if (e.target.closest('.name-btn') || e.target.closest('.fname-input')) return;
     el.classList.toggle('open');
-    // Persist open state so re-renders don't collapse it
-    if (el.classList.contains('open')) state.openFronts.add(front.sessionName);
-    else state.openFronts.delete(front.sessionName);
+    const session = el.dataset.session;
+    el.classList.contains('open') ? state.openFronts.add(session) : state.openFronts.delete(session);
     resizeToContent();
   });
 
-  // Name edit / confirm buttons (in the initial build)
-  rebuildFhRow(el, front);
+  // Name button delegation (works for dynamically replaced buttons)
+  el.querySelector('.fh-row').addEventListener('click', (e) => {
+    const btn = e.target.closest('.name-btn');
+    if (!btn) return;
+    e.stopPropagation();
+    const action = btn.dataset.action;
+    const session = el.dataset.session;
+    const frontData = state.data.fronts.find(f => f.sessionName === session);
+    if (!frontData) return;
+
+    if (action === 'edit') {
+      state.inlineEditSession = session;
+      rebuildNameRow(el, frontData);
+    } else if (action === 'confirm') {
+      window.helm.confirmName(session, frontData.name || session);
+    } else if (action === 'save') {
+      const input = el.querySelector('.fname-input');
+      const name = input ? input.value.trim() || session : session;
+      if (frontData) { frontData.name = name; frontData.aiSuggested = false; }
+      window.helm.confirmName(session, name);
+      state.inlineEditSession = null;
+      render();
+    }
+  });
+}
+
+function rebuildNameRow(el, front) {
+  const fhRow = el.querySelector('.fh-row');
+  if (!fhRow) return;
+  const displayName = front.name || front.sessionName;
+
+  if (state.inlineEditSession === front.sessionName) {
+    fhRow.innerHTML = `
+      <span class="drag-handle" draggable="false">⠿</span>
+      <div class="fname-edit">
+        <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
+        <button class="name-btn ok" data-action="save">✓ ok</button>
+      </div>
+    `;
+    const input = fhRow.querySelector('.fname-input');
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
+        if (e.key === 'Enter')  { e.stopPropagation(); fhRow.querySelector('[data-action="save"]')?.click(); }
+      });
+      setTimeout(() => input.focus(), 0);
+    }
+  } else {
+    fhRow.innerHTML = `
+      <span class="drag-handle" draggable="false">⠿</span>
+      <span class="fname">${escapeHtml(displayName)}</span>
+      ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
+      <button class="name-btn" data-action="edit">editar</button>
+    `;
+  }
 }
 
 // ── Agent rows reconciler ─────────────────────────────────────────────────
 
-function patchAgentRows(agentsEl, front) {
+function reconcileAgentRows(agentsEl, front) {
   if (!agentsEl) return;
 
-  // Index existing rows by paneId
   const byPane = new Map();
-  for (const row of agentsEl.querySelectorAll('.agent-row[data-pane]')) {
-    byPane.set(row.dataset.pane, row);
-  }
+  for (const row of agentsEl.querySelectorAll('.agent-row[data-pane]')) byPane.set(row.dataset.pane, row);
 
   // Remove stale
   for (const [id, row] of byPane) {
-    if (!front.agents.find(a => a.paneId === id)) {
-      row.remove();
-      byPane.delete(id);
-    }
+    if (!front.agents.find(a => a.paneId === id)) { row.remove(); byPane.delete(id); }
   }
 
-  // Update or create in order
   front.agents.forEach((agent, idx) => {
     let row = byPane.get(agent.paneId);
     if (!row) {
-      row = buildAgentRow(agent, front);
+      row = createAgentRow(agent, front);
       byPane.set(agent.paneId, row);
     } else {
       patchAgentRow(row, agent);
     }
-    const atIdx = agentsEl.children[idx];
-    if (atIdx !== row) agentsEl.insertBefore(row, atIdx || null);
+    if (agentsEl.children[idx] !== row) agentsEl.insertBefore(row, agentsEl.children[idx] || null);
   });
 }
 
-function buildAgentRow(agent, front) {
+function createAgentRow(agent, front) {
   const row = document.createElement('div');
   row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
   row.dataset.pane = agent.paneId;
+  const tag = agentTag(agent.command);
   row.innerHTML = `
     <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
     <div class="ar-body">
       <div class="ar-top">
-        <span class="ar-agent ${agentTag(agent.command)}">${escapeHtml(agentTag(agent.command))}</span>
+        <span class="ar-agent ${tag}">${escapeHtml(tag)}</span>
         <span class="ar-task">${escapeHtml(agent.task || agent.windowName)}</span>
       </div>
       <div class="ar-preview ${agent.status === 'waiting' ? 'wait-prev' : ''}">${escapeHtml(agent.lastOutput || '')}</div>
@@ -437,10 +409,12 @@ function patchAgentRow(row, agent) {
   const dot = row.querySelector('.ar-dot');
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
 
+  const task = row.querySelector('.ar-task');
+  if (task) setText(task, agent.task || agent.windowName);
+
   const preview = row.querySelector('.ar-preview');
   if (preview) {
     cls(preview, 'wait-prev', isWait);
-    const newText = escapeHtml(agent.lastOutput || '');
-    if (preview.innerHTML !== newText) preview.innerHTML = newText;
+    setText(preview, agent.lastOutput || '');
   }
 }

@@ -188,3 +188,9 @@ ipcMain.on('save-front-order', (_e, order) => {
 });
 
 ipcMain.handle('get-state', () => latestState);
+
+ipcMain.handle('get-front-order', () => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(helmDir, 'front-order.json'), 'utf8'));
+  } catch { return []; }
+});

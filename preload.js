@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('helm', {
   confirmName: (sessionName, name) => ipcRenderer.send('confirm-name', sessionName, name),
   setIgnoreMouse: (ignore) => ipcRenderer.sendSync('set-ignore-mouse', ignore),
   saveFrontOrder: (order) => ipcRenderer.send('save-front-order', order),
+  getFrontOrder: () => ipcRenderer.invoke('get-front-order'),
   onShortcutFired: (cb) => ipcRenderer.on('shortcut-fired', cb),
   onStateUpdate: (cb) => ipcRenderer.on('state-update', (_event, state) => cb(state)),
   getState: () => ipcRenderer.invoke('get-state')
