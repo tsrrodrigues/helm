@@ -54,6 +54,23 @@ window.helm.onShortcutFired(() => {
 window.helm.onStateUpdate((next) => {
   if (!next) return;
   applyFrontOrder(next);
+
+  // Auto-open panel when an agent transitions to "waiting"
+  const prevWaiting = new Set();
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) { if (a.status === 'waiting') prevWaiting.add(a.paneId); }
+  }
+  let newWaiting = false;
+  for (const f of (next.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.status === 'waiting' && !prevWaiting.has(a.paneId)) newWaiting = true;
+    }
+  }
+  if (newWaiting) {
+    for (const f of (next.fronts || [])) state.openFronts.add(f.sessionName);
+    if (!state.open) togglePanel(true);
+  }
+
   state.data = next;
   if (!state.inlineEditSession) render();
 });
