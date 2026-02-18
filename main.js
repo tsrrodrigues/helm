@@ -55,6 +55,7 @@ function createWindow() {
     resizable: false,
     skipTaskbar: true,
     hasShadow: false,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -64,8 +65,12 @@ function createWindow() {
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setIgnoreMouseEvents(true, { forward: true });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
+
+  win.once('ready-to-show', () => {
+    win.setIgnoreMouseEvents(true, { forward: true });
+    win.show();
+  });
 }
 
 function connectDaemon() {
