@@ -59,13 +59,22 @@ window.helm.getState().then((initial) => {
 function togglePanel(force) {
   state.open = typeof force === 'boolean' ? force : !state.open;
   panel.hidden = !state.open;
-  resizeToContent();
   render();
+  resizeToContent();
 }
 
 function resizeToContent() {
-  const h = state.open ? Math.min(420, panel.scrollHeight + 52) : 52;
-  window.helm.resizeWindow(h);
+  if (!state.open) {
+    window.helm.resizeWindow(52);
+    return;
+  }
+  // Dois frames: primeiro o DOM renderiza, depois medimos o tamanho real
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const h = Math.min(560, (panel.scrollHeight || 200) + 60);
+      window.helm.resizeWindow(h);
+    });
+  });
 }
 
 function navigateTo(agent) {

@@ -107,8 +107,8 @@ ipcMain.on('resize-window', (_event, height) => {
   const width = 660;
   const primaryDisplay = screen.getPrimaryDisplay();
   const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - width) / 2);
-  const h = Math.max(52, Number(height) || 52);
-  win.setBounds({ x, y: 0, width, height: h });
+  const h = Math.max(52, Math.min(600, Number(height) || 52));
+  win.setBounds({ x, y: 0, width, height: h }, true);
 });
 
 ipcMain.on('navigate-to-pane', async (_event, sessionName, windowName, paneId, weztermTabId) => {
