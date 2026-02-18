@@ -137,6 +137,12 @@ ipcMain.on('navigate-to-pane', async (_event, sessionName, windowName, paneId, w
   if (paneId) await runFile('tmux', ['select-pane', '-t', String(paneId)]);
 });
 
+ipcMain.on('save-front-order', (_event, order) => {
+  if (!Array.isArray(order)) return;
+  const orderFile = path.join(os.homedir(), '.helm', 'front-order.json');
+  try { fs.writeFileSync(orderFile, JSON.stringify(order, null, 2), 'utf8'); } catch (e) { console.error('save-front-order:', e.message); }
+});
+
 ipcMain.on('set-ignore-mouse', (_event, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
 });

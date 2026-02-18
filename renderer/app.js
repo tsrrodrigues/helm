@@ -3,7 +3,8 @@ const state = {
   open: false,
   selectedPane: null,
   inlineEditSession: null,
-  shortcutMode: false
+  shortcutMode: false,
+  frontOrder: []   // persists user-defined order across daemon updates
 };
 
 const $ = (id) => document.getElementById(id);
@@ -47,7 +48,25 @@ window.helm.onShortcutFired(() => {
 });
 
 window.helm.onStateUpdate((next) => {
-  state.data = next || state.data;
+  if (!next) return;
+
+  // Apply user-defined order before rendering
+  if (state.frontOrder.length > 0 && next.fronts) {
+    next.fronts = [...next.fronts].sort((a, b) => {
+      const ai = state.frontOrder.indexOf(a.sessionName);
+      const bi = state.frontOrder.indexOf(b.sessionName);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  }
+
+  state.data = next;
+
+  // Don't re-render while user is editing a name — it would reset the input
+  if (state.inlineEditSession) return;
+
   render();
 });
 
@@ -138,13 +157,15 @@ function render() {
       e.preventDefault();
       frontEl.classList.remove('drag-over');
       if (!dragSrc || dragSrc === frontEl) return;
-      // Reorder in state
       const fronts = state.data.fronts;
       const fromIdx = fronts.findIndex(f => f.sessionName === dragSrc.dataset.session);
       const toIdx   = fronts.findIndex(f => f.sessionName === frontEl.dataset.session);
       if (fromIdx !== -1 && toIdx !== -1) {
         const [moved] = fronts.splice(fromIdx, 1);
         fronts.splice(toIdx, 0, moved);
+        // Persist order so daemon updates don't reset it
+        state.frontOrder = fronts.map(f => f.sessionName);
+        window.helm.saveFrontOrder(state.frontOrder);
         render();
       }
       dragSrc = null;
@@ -224,10 +245,24 @@ function render() {
       e.stopPropagation();
       const input = frontEl.querySelector('.fname-input');
       const name = input.value.trim() || front.sessionName;
+      // Update local display immediately — don't wait for daemon
+      const f = state.data.fronts.find(x => x.sessionName === front.sessionName);
+      if (f) { f.name = name; f.aiSuggested = false; }
       window.helm.confirmName(front.sessionName, name);
       state.inlineEditSession = null;
       render();
     });
+
+    // Allow Escape to cancel editing
+    const inputEl = frontEl.querySelector('.fname-input');
+    if (inputEl) {
+      inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
+        if (e.key === 'Enter')  { e.stopPropagation(); saveBtn && saveBtn.click(); }
+      });
+      // Focus the input when edit mode opens
+      setTimeout(() => inputEl.focus(), 0);
+    }
 
     frontsEl.appendChild(frontEl);
   }
