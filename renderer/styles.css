@@ -55,7 +55,7 @@ html, body {
 /* ── Panel ─────────────────────────────────────────── */
 .panel {
   margin-top: 8px;
-  width: 718px;
+  width: 878px;
   background: rgba(10, 10, 20, 0.97);
   border: 1px solid rgba(255,255,255,0.09);
   border-radius: 16px;
@@ -212,7 +212,7 @@ html, body {
 .ar-dot.wait { background: #ffa502; animation: pw 1.3s infinite; }
 
 .ar-body { flex: 1; min-width: 0; }
-.ar-top  { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.ar-top  { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 
 .ar-agent {
   font-size: 9px;
@@ -226,24 +226,23 @@ html, body {
 .ar-agent.claude { background: rgba(255,165,2,.12); color: #b07820; }
 .ar-agent.codex  { background: rgba(108,99,255,.14); color: #8a7adc; }
 
-.ar-task {
-  font-size: 12px;
-  color: #bbb;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
+.ar-time {
+  font-size: 10px;
+  color: #555;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
-.ar-preview {
-  font-size: 10px;
-  color: #444;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+.ar-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -.01em;
 }
-.ar-preview.wait-prev { color: #6a4a10; }
 
 .ar-nav {
   font-size: 11px;

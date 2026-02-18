@@ -39,6 +39,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.open) togglePanel(false);
 });
 
+window.helm.onActiveApp(({ isTerminal }) => {
+  if (!isTerminal && state.open) togglePanel(false);
+});
+
 window.helm.onShortcutFired(() => {
   state.shortcutMode = true;
   if (!state.open) togglePanel(true);
@@ -130,6 +134,15 @@ function agentTag(command) {
   if (c.includes('codex')) return 'codex';
   // Claude Code reports version as command (e.g. "2.1.37"), treat as claude
   return 'claude';
+}
+
+function formatElapsed(startedAtMs) {
+  if (!startedAtMs) return '';
+  const sec = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+  if (sec < 60) return '< 1m';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  return `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h`;
 }
 
 function cls(el, name, on) { on ? el.classList.add(name) : el.classList.remove(name); }
@@ -452,7 +465,7 @@ function reconcileAgentRows(agentsEl, front) {
       row = createAgentRow(agent, front);
       byPane.set(agent.paneId, row);
     } else {
-      patchAgentRow(row, agent);
+      patchAgentRow(row, agent, front);
     }
     if (agentsEl.children[idx] !== row) agentsEl.insertBefore(row, agentsEl.children[idx] || null);
   });
@@ -463,14 +476,15 @@ function createAgentRow(agent, front) {
   row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
   row.dataset.pane = agent.paneId;
   const tag = agentTag(agent.command);
+  const displayName = front.name || front.sessionName;
   row.innerHTML = `
     <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
     <div class="ar-body">
       <div class="ar-top">
         <span class="ar-agent ${tag}">${escapeHtml(tag)}</span>
-        <span class="ar-task">${escapeHtml(agent.task || agent.windowName)}</span>
+        <span class="ar-time">${formatElapsed(agent.interactionStartedAt)}</span>
       </div>
-      <div class="ar-preview ${agent.status === 'waiting' ? 'wait-prev' : ''}">${escapeHtml(agent.lastOutput || '')}</div>
+      <div class="ar-name">${escapeHtml(displayName)}</div>
     </div>
     <div class="ar-nav">ir →</div>
   `;
@@ -481,19 +495,16 @@ function createAgentRow(agent, front) {
   return row;
 }
 
-function patchAgentRow(row, agent) {
+function patchAgentRow(row, agent, front) {
   const isWait = agent.status === 'waiting';
   cls(row, 'is-wait', isWait);
 
   const dot = row.querySelector('.ar-dot');
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
 
-  const task = row.querySelector('.ar-task');
-  if (task) setText(task, agent.task || agent.windowName);
+  const nameEl = row.querySelector('.ar-name');
+  if (nameEl) setText(nameEl, front.name || front.sessionName);
 
-  const preview = row.querySelector('.ar-preview');
-  if (preview) {
-    cls(preview, 'wait-prev', isWait);
-    setText(preview, agent.lastOutput || '');
-  }
+  const time = row.querySelector('.ar-time');
+  if (time) setText(time, formatElapsed(agent.interactionStartedAt));
 }

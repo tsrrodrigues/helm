@@ -53,6 +53,10 @@ const WAIT_PROMPTS = [
 // ── State ─────────────────────────────────────────────────────────────────
 const paneMemory = new Map();
 const aiSuggestedSessions = new Set();
+const prevPaneStatus = new Map();   // paneId → 'running' | 'waiting' | 'idle'
+const interactionStart = new Map(); // paneId → timestamp (start of current interaction)
+const lastRenameAt = new Map();     // sessionName → timestamp
+const RENAME_COOLDOWN_MS = 30000;
 let cachedState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
@@ -97,7 +101,8 @@ if (!weztermBin) weztermBin = 'wezterm';
 
 const sysEnv = {
   ...process.env,
-  PATH: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(':')
+  PATH: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(':'),
+  LANG: process.env.LANG || 'en_US.UTF-8'
 };
 
 function execCmd(cmd, args = [], timeout = 3500) {
@@ -108,6 +113,56 @@ function execCmd(cmd, args = [], timeout = 3500) {
       resolve({ ok: !error, error, stdout: stdout || '', stderr: stderr || '' });
     });
   });
+}
+
+// ── Process tree detection ────────────────────────────────────────────────
+
+// Patterns for persistent/background children to ignore (not tool executions)
+const PERSISTENT_CHILD_PATTERNS = [
+  /--stdio/i,            // MCP / language servers
+  /\bmcp\b/i,            // MCP servers
+  /^caffeinate\b/,       // macOS sleep-prevention utility
+];
+
+function isPersistentChild(args) {
+  return PERSISTENT_CHILD_PATTERNS.some(rx => rx.test(args));
+}
+
+async function getProcessTree() {
+  const res = await execCmd('ps', ['-eo', 'pid=,ppid=,args='], 5000);
+  if (!res.ok) return new Map();
+  const tree = new Map(); // ppid → [{pid, args}]
+  for (const line of res.stdout.split('\n')) {
+    const trimmed = line.trimStart();
+    if (!trimmed) continue;
+    const match = trimmed.match(/^(\d+)\s+(\d+)\s+(.*)$/);
+    if (!match) continue;
+    const pid = match[1];
+    const ppid = match[2];
+    const args = match[3].trim();
+    if (!tree.has(ppid)) tree.set(ppid, []);
+    tree.get(ppid).push({ pid, args });
+  }
+  return tree;
+}
+
+function getAgentInfo(panePids, processTree) {
+  const result = new Map(); // paneId → {agentPid, hasActiveChildren}
+  for (const [paneId, panePid] of panePids) {
+    const children = processTree.get(panePid) || [];
+    // Find the agent binary (direct child of the pane shell)
+    const agentChild = children.find(c => {
+      const basename = path.basename(c.args.split(/\s/)[0]).toLowerCase();
+      return AGENT_PATTERNS.some(rx => rx.test(basename));
+    });
+    if (!agentChild) continue;
+
+    // Check if agent has non-persistent children (tool executions)
+    const agentChildren = processTree.get(agentChild.pid) || [];
+    const hasActiveChildren = agentChildren.some(c => !isPersistentChild(c.args));
+    result.set(paneId, { agentPid: agentChild.pid, hasActiveChildren });
+  }
+  return result;
 }
 
 // ── tmux helpers ──────────────────────────────────────────────────────────
@@ -158,11 +213,22 @@ function hasRunIndicator(recentLines) {
   return RUN_SYMBOLS.some(rx => rx.test(text)) || RUN_TEXT.some(rx => rx.test(text));
 }
 
-function statusForPane(pane, output, now) {
+function statusForPane(pane, output, now, hasActiveChildren) {
   const command = pane.command.toLowerCase();
 
   if (IGNORE_COMMANDS.has(command)) return null;
   if (IDLE_SHELLS.has(command)) return { status: 'idle', waitingSince: null };
+
+  // Process tree override: if agent has active (non-persistent) children,
+  // it's definitely running a tool — terminal heuristics don't matter
+  if (hasActiveChildren === true) {
+    paneMemory.set(pane.paneId, {
+      output,
+      lastChangedAt: Date.now(),
+      waitingSince: null
+    });
+    return { status: 'running', waitingSince: null };
+  }
 
   const allLines = output.split('\n');
   const lastLine = allLines[allLines.length - 1] || '';
@@ -208,29 +274,37 @@ function statusForPane(pane, output, now) {
 
 // ── WezTerm tab mapping ───────────────────────────────────────────────────
 
-let _weztermLogged = false;
-
 async function weztermMap(sessions) {
-  const res = await execCmd('wezterm', ['cli', 'list', '--format', 'json']);
-  if (!res.ok) return {};
+  const [wzRes, tmuxRes] = await Promise.all([
+    execCmd('wezterm', ['cli', 'list', '--format', 'json']),
+    execCmd('tmux', ['list-clients', '-F', '#{client_tty}\t#{session_name}'])
+  ]);
+  if (!wzRes.ok) return {};
 
   try {
-    const items = JSON.parse(res.stdout || '[]');
+    const items = JSON.parse(wzRes.stdout || '[]');
 
-    if (items.length > 0 && !_weztermLogged) {
-      _weztermLogged = true;
-      console.log('[helm] wezterm fields:', Object.keys(items[0]).join(', '));
+    // Build TTY → WezTerm tab_id map
+    const ttyToTab = {};
+    for (const item of items) {
+      if (item.tty_name) ttyToTab[item.tty_name] = item.tab_id ?? item.tabId ?? null;
     }
 
+    // Build session → TTY map from tmux clients
+    const sessionToTty = {};
+    if (tmuxRes.ok) {
+      for (const line of tmuxRes.stdout.split('\n').filter(Boolean)) {
+        const [tty, session] = line.split('\t');
+        if (tty && session) sessionToTty[session] = tty;
+      }
+    }
+
+    // Cross-reference: session → TTY → tab_id
     const map = {};
     for (const sessionName of sessions) {
-      const match = items.find((item) => {
-        const blob = JSON.stringify(item).toLowerCase();
-        return blob.includes(sessionName.toLowerCase());
-      });
-      if (match) {
-        const tabId = match.tab_id ?? match.tabId ?? match.tab?.id ?? null;
-        if (tabId != null) map[sessionName] = tabId;
+      const tty = sessionToTty[sessionName];
+      if (tty && ttyToTab[tty] != null) {
+        map[sessionName] = ttyToTab[tty];
       }
     }
     return map;
@@ -271,6 +345,27 @@ async function suggestName(sessionName, panePath, command) {
   } catch { return sessionName; }
 }
 
+async function suggestNameFromOutput(sessionName, output, status) {
+  const key = getApiKey();
+  if (!key) return sessionName;
+
+  const lines = output.split('\n').filter(Boolean).slice(-20);
+  const recentOutput = lines.join('\n').slice(-1500);
+
+  const prompt = `You name terminal sessions. Based on the output below from an AI coding agent, suggest a short name (2-4 words, title case) that describes the current task.\n\nStatus: ${status}\nRecent output:\n${recentOutput}\n\nReply with ONLY the name, nothing else.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-3-haiku-20240307', max_tokens: 20, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (!response.ok) return sessionName;
+    const data = await response.json();
+    return cleanTaskName(data?.content?.[0]?.text, sessionName);
+  } catch { return sessionName; }
+}
+
 // ── Build state ───────────────────────────────────────────────────────────
 
 async function buildState() {
@@ -282,6 +377,12 @@ async function buildState() {
   const confirmed = readConfirmed();
   const sessions = [...new Set(panes.map(p => p.sessionName))];
   const tabMap = await weztermMap(sessions);
+
+  // Build process tree once per tick
+  const processTree = await getProcessTree();
+  const panePids = new Map(); // paneId → panePid
+  for (const pane of panes) if (pane.panePid) panePids.set(pane.paneId, pane.panePid);
+  const agentInfo = getAgentInfo(panePids, processTree);
 
   // Trigger AI naming for new sessions (fire-and-forget)
   for (const s of sessions) {
@@ -298,8 +399,34 @@ async function buildState() {
   const frontsMap = new Map();
   for (const pane of panes) {
     const output = await capturePane(pane.paneId);
-    const st = statusForPane(pane, output, now);
+    const info = agentInfo.get(pane.paneId);
+    const hasActiveChildren = info ? info.hasActiveChildren : undefined;
+    const st = statusForPane(pane, output, now, hasActiveChildren);
     if (!st) continue;
+
+    // Track interaction start: reset when transitioning from waiting/idle → running
+    const prevStatus = prevPaneStatus.get(pane.paneId);
+    if (st.status === 'running' && (!prevStatus || prevStatus !== 'running')) {
+      interactionStart.set(pane.paneId, now);
+    } else if (st.status === 'idle') {
+      interactionStart.delete(pane.paneId);
+    }
+    prevPaneStatus.set(pane.paneId, st.status);
+    if (prevStatus && prevStatus !== st.status && !confirmed[pane.sessionName]) {
+      const lastRename = lastRenameAt.get(pane.sessionName) || 0;
+      if (now - lastRename >= RENAME_COOLDOWN_MS) {
+        lastRenameAt.set(pane.sessionName, now);
+        console.log(`[helm] status change ${pane.sessionName}: ${prevStatus} → ${st.status}, renaming...`);
+        suggestNameFromOutput(pane.sessionName, output, st.status).then((suggested) => {
+          const cur = readNames();
+          const conf = readConfirmed();
+          if (!conf[pane.sessionName]) {
+            cur[pane.sessionName] = suggested;
+            writeNames(cur);
+          }
+        });
+      }
+    }
 
     if (!frontsMap.has(pane.sessionName)) {
       frontsMap.set(pane.sessionName, {
@@ -323,7 +450,8 @@ async function buildState() {
       task: taskLine.trim().slice(0, 80),
       status: st.status,
       lastOutput,
-      waitingSince: st.waitingSince
+      waitingSince: st.waitingSince,
+      interactionStartedAt: interactionStart.get(pane.paneId) || null
     });
   }
 
