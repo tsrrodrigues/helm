@@ -15,14 +15,21 @@ const frontsEl = $('fronts');
 pill.addEventListener('click', () => togglePanel());
 pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
 
-// Hover tracking via mousemove: toggle ignoreMouseEvents based on cursor position.
-// We check every move so the cursor switches as soon as the mouse touches the pill.
+// Hover tracking: toggle ignoreMouseEvents based on cursor position.
+// Only send IPC when state actually changes (avoids spamming main process on every mousemove).
+// sendSync ensures the cursor switches in the same frame with no async lag.
+let _ignoring = true;
+function setIgnoreIfChanged(ignore) {
+  if (ignore === _ignoring) return;
+  _ignoring = ignore;
+  window.helm.setIgnoreMouse(ignore);
+}
 document.addEventListener('mousemove', (e) => {
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const overUI = !!el && el !== document.documentElement && el !== document.body;
-  window.helm.setIgnoreMouse(!overUI);
+  setIgnoreIfChanged(!overUI);
 });
-document.addEventListener('mouseleave', () => window.helm.setIgnoreMouse(true));
+document.addEventListener('mouseleave', () => setIgnoreIfChanged(true));
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) {

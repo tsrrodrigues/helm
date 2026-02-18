@@ -142,8 +142,9 @@ ipcMain.on('resize-window', (_e, height) => {
   win.setBounds({ x, y: 0, width, height: h }, true);
 });
 
-ipcMain.on('set-ignore-mouse', (_e, ignore) => {
+ipcMain.on('set-ignore-mouse', (e, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
+  e.returnValue = null; // required for sendSync to unblock renderer immediately
 });
 
 ipcMain.on('navigate-to-pane', async (_e, sessionName, windowName, paneId, weztermTabId) => {

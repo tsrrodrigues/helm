@@ -135,6 +135,12 @@ async function capturePane(paneId) {
   return res.stdout.trimEnd();
 }
 
+// Strip ANSI escape codes (tmux capture-pane -p should strip them, but just in case)
+function stripAnsi(str) {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b[^[]/g, '');
+}
+
 function looksWaiting(lastLine) {
   if (!lastLine) return false;
   return WAIT_HINTS.some((rx) => rx.test(lastLine.trim()));
@@ -143,7 +149,9 @@ function looksWaiting(lastLine) {
 function statusForPane(pane, output, now) {
   const command = pane.command.toLowerCase();
   const allLines = output.split('\n').filter(Boolean);
-  const lastLine = allLines[allLines.length - 1] || '';
+  // Strip ANSI codes from the last line for reliable pattern matching
+  const rawLastLine = allLines[allLines.length - 1] || '';
+  const lastLine = stripAnsi(rawLastLine);
   // Only check text-based RUN patterns against recent lines to avoid false positives from diff content
   const recentOutput = allLines.slice(-6).join('\n');
 
@@ -162,6 +170,11 @@ function statusForPane(pane, output, now) {
 
   // Explicit wait prompt on last line → detect immediately (no stability timer needed)
   const hasExplicitWaitPrompt = looksWaiting(lastLine);
+
+  // Debug: log last line for agent processes so we can diagnose detection issues
+  if (isAgentProcess) {
+    console.log(`[helm:detect] pane=${pane.paneId} cmd=${command} lastLine=${JSON.stringify(lastLine)} wait=${hasExplicitWaitPrompt} running=${isActivelyRunning} changed=${changed}`);
+  }
 
   // Running indicators: spinners anywhere in output, OR text patterns in recent lines only
   const isActivelyRunning =
