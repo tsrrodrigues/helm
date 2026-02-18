@@ -228,7 +228,7 @@ function createFrontEl(front) {
 function patchFrontEl(el, front) {
   const wait = front.agents.filter(a => a.status === 'waiting').length;
   const run  = front.agents.filter(a => a.status === 'running').length;
-  const isOpen = el.classList.contains('open');
+  const isOpen = state.openFronts.has(front.sessionName);
   const isSelected = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane?.paneId);
 
   el.className = frontClasses(wait) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
