@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld('helm', {
   getFrontOrder: () => ipcRenderer.invoke('get-front-order'),
   onShortcutFired: (cb) => ipcRenderer.on('shortcut-fired', cb),
   onStateUpdate: (cb) => ipcRenderer.on('state-update', (_event, state) => cb(state)),
+  onActiveApp: (cb) => ipcRenderer.on('active-app-changed', (_event, info) => cb(info)),
   getState: () => ipcRenderer.invoke('get-state')
 });

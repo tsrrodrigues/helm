@@ -2,6 +2,7 @@ const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electro
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 const { execFile } = require('child_process');
 const WebSocket = require('ws');
 
@@ -35,6 +36,43 @@ function runFile(file, args = [], silent = false) {
   });
 }
 
+// ── AeroSpace IPC via Unix socket (CLI hangs inside Electron) ────────────
+const AERO_SOCK = `/tmp/bobko.aerospace-${os.userInfo().username}.sock`;
+
+function aeroCmd(args) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (result) => { if (!resolved) { resolved = true; resolve(result); } };
+
+    const sock = net.createConnection(AERO_SOCK, () => {
+      sock.write(JSON.stringify({ command: '', args, stdin: '' }));
+      sock.end();
+    });
+    const chunks = [];
+    sock.on('data', (d) => chunks.push(d));
+    sock.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString();
+        const first = raw.indexOf('{');
+        const brace = findMatchingBrace(raw, first);
+        const res = JSON.parse(raw.substring(first, brace + 1));
+        done({ ok: res.exitCode === 0, stdout: (res.stdout || '').trim(), stderr: (res.stderr || '').trim() });
+      } catch (e) { done({ ok: false, stdout: '', stderr: 'parse: ' + e.message }); }
+    });
+    sock.on('error', (e) => done({ ok: false, stdout: '', stderr: e.message }));
+    sock.setTimeout(3000, () => { sock.destroy(); done({ ok: false, stdout: '', stderr: 'timeout' }); });
+  });
+}
+
+function findMatchingBrace(str, start) {
+  let depth = 0;
+  for (let i = start; i < str.length; i++) {
+    if (str[i] === '{') depth++;
+    else if (str[i] === '}') { depth--; if (depth === 0) return i; }
+  }
+  return str.length - 1;
+}
+
 function ensureDir() {
   try {
     if (!fs.existsSync(helmDir)) fs.mkdirSync(helmDir, { recursive: true });
@@ -50,10 +88,66 @@ function writeJson(file, data) {
   try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); } catch (e) { console.error('[helm] writeJson:', e.message); }
 }
 
+// ── Terminal bundle IDs ───────────────────────────────────────────────────
+const TERMINAL_BUNDLE_IDS = new Set([
+  'com.github.wez.wezterm',
+  'com.apple.Terminal',
+  'com.googlecode.iterm2',
+  'net.kovidgoyal.kitty',
+  'co.zeit.hyper',
+  'com.github.Electron'   // Helm itself (clicking on the pill)
+]);
+
+// ── AeroSpace workspace tracking & active-app detection ──────────────────
+let aeroWindowId = null;
+let lastWorkspace = null;
+let lastActiveApp = null;
+
+function startOverlayTracking() {
+  // Resolve our AeroSpace window ID once the window is ready
+  setTimeout(async () => {
+    const res = await aeroCmd(['list-windows', '--all']);
+    if (res.ok && res.stdout) {
+      for (const line of res.stdout.split('\n')) {
+        if (line.includes('Helm HUD')) {
+          const match = line.match(/^(\d+)/);
+          if (match) { aeroWindowId = match[1]; break; }
+        }
+      }
+    }
+  }, 2000);
+
+  // Fast poll: workspace tracking (50ms — socket IPC ~10ms, so max flicker ~60ms)
+  setInterval(async () => {
+    const { ok, stdout: ws } = await aeroCmd(['list-workspaces', '--focused']);
+    if (ok && ws && ws !== lastWorkspace) {
+      lastWorkspace = ws;
+      if (aeroWindowId) {
+        await aeroCmd(['move-node-to-workspace', ws, '--window-id', aeroWindowId]);
+        if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
+      }
+    }
+  }, 50);
+
+  // Slow poll: active app detection (500ms — uses osascript, heavier)
+  setInterval(async () => {
+    const { ok, stdout: appId } = await runFile('osascript', [
+      '-e', 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true'
+    ], true);
+    if (ok && appId && appId !== lastActiveApp) {
+      lastActiveApp = appId;
+      const isTerminal = TERMINAL_BUNDLE_IDS.has(appId);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('active-app-changed', { appId, isTerminal });
+      }
+    }
+  }, 500);
+}
+
 // ── Window ────────────────────────────────────────────────────────────────
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
-  const width = 740;
+  const width = 900;
   const x = Math.round(workArea.x + (workArea.width - width) / 2);
 
   win = new BrowserWindow({
@@ -113,6 +207,28 @@ function connectDaemon() {
   daemonSocket.on('error', () => setTimeout(connectDaemon, 2500));
 }
 
+// ── Renderer hot reload ──────────────────────────────────────────────────
+function watchRenderer() {
+  const dir = path.join(__dirname, 'renderer');
+  const mtimes = new Map();
+  let timer;
+  fs.watch(dir, { recursive: true }, (_ev, filename) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!filename) return;
+      const file = path.join(dir, filename);
+      let mtime;
+      try { mtime = fs.statSync(file).mtimeMs; } catch { return; }
+      if (mtimes.get(file) === mtime) return;
+      mtimes.set(file, mtime);
+      if (win && !win.isDestroyed()) {
+        console.log('[helm] renderer changed, reloading...');
+        win.webContents.reloadIgnoringCache();
+      }
+    }, 300);
+  });
+}
+
 // ── App bootstrap ─────────────────────────────────────────────────────────
 app.setName('Helm');
 
@@ -120,6 +236,8 @@ app.whenReady().then(() => {
   ensureDir();
   createWindow();
   connectDaemon();
+  watchRenderer();
+  startOverlayTracking();
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (win && !win.isDestroyed()) win.webContents.send('shortcut-fired');
   });
@@ -136,7 +254,7 @@ app.on('window-all-closed', () => app.quit());
 ipcMain.on('resize-window', (_e, height) => {
   if (!win || win.isDestroyed()) return;
   const { workArea } = screen.getPrimaryDisplay();
-  const width = 740;
+  const width = 900;
   const x = Math.round(workArea.x + (workArea.width - width) / 2);
   const h = Math.max(52, Math.min(620, Number(height) || 52));
   win.setBounds({ x, y: 0, width, height: h }, true);

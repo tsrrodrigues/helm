@@ -476,7 +476,6 @@ function createAgentRow(agent, front) {
   row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
   row.dataset.pane = agent.paneId;
   const tag = agentTag(agent.command);
-  const displayName = front.name || front.sessionName;
   row.innerHTML = `
     <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
     <div class="ar-body">
@@ -484,7 +483,7 @@ function createAgentRow(agent, front) {
         <span class="ar-agent ${tag}">${escapeHtml(tag)}</span>
         <span class="ar-time">${formatElapsed(agent.interactionStartedAt)}</span>
       </div>
-      <div class="ar-name">${escapeHtml(displayName)}</div>
+      <div class="ar-name">${escapeHtml(agent.task || agent.windowName)}</div>
     </div>
     <div class="ar-nav">ir →</div>
   `;
@@ -503,7 +502,7 @@ function patchAgentRow(row, agent, front) {
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
 
   const nameEl = row.querySelector('.ar-name');
-  if (nameEl) setText(nameEl, front.name || front.sessionName);
+  if (nameEl) setText(nameEl, agent.task || agent.windowName);
 
   const time = row.querySelector('.ar-time');
   if (time) setText(time, formatElapsed(agent.interactionStartedAt));
