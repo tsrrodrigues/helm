@@ -181,7 +181,6 @@ function createFrontEl(front) {
   const run  = front.agents.filter(a => a.status === 'running').length;
 
   el.className = frontClasses(wait) + (state.openFronts.has(front.sessionName) ? ' open' : '');
-  el.setAttribute('draggable', 'true');
 
   el.innerHTML = `
     <div class="front-head">
@@ -259,40 +258,15 @@ function frontClasses(waitCount) {
 // ── Front events (attached once) ──────────────────────────────────────────
 
 function attachFrontEvents(el, front) {
-  // Drag — force mouse events on during drag (transparent window can swallow drag events)
-  el.addEventListener('dragstart', (e) => {
-    el.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    setIgnoreIfChanged(false);
-  });
-  el.addEventListener('dragend', () => {
-    el.classList.remove('dragging');
-    document.querySelectorAll('.front.drag-over').forEach(f => f.classList.remove('drag-over'));
-    // Restore mouse passthrough after a small delay (let drop handler fire first)
-    setTimeout(() => setIgnoreIfChanged(true), 100);
-  });
-  el.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    const src = document.querySelector('.front.dragging');
-    if (src && src !== el) el.classList.add('drag-over');
-  });
-  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
-  el.addEventListener('drop', (e) => {
-    e.preventDefault();
-    el.classList.remove('drag-over');
-    const src = document.querySelector('.front.dragging');
-    if (!src || src === el) return;
-    const fronts = state.data.fronts;
-    const from = fronts.findIndex(f => f.sessionName === src.dataset.session);
-    const to   = fronts.findIndex(f => f.sessionName === el.dataset.session);
-    if (from !== -1 && to !== -1) {
-      const [moved] = fronts.splice(from, 1);
-      fronts.splice(to, 0, moved);
-      state.frontOrder = fronts.map(f => f.sessionName);
-      window.helm.saveFrontOrder(state.frontOrder);
-      reconcileFronts();
-    }
-  });
+  // Manual drag-to-reorder via handle (HTML5 D&D doesn't work on transparent Electron windows)
+  const handle = el.querySelector('.drag-handle');
+  if (handle) {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startDrag(el, e.clientX);
+    });
+  }
 
   // Toggle open on header click
   el.querySelector('.front-head').addEventListener('click', (e) => {
@@ -358,6 +332,85 @@ function rebuildNameRow(el, front) {
       <button class="name-btn" data-action="edit">editar</button>
     `;
   }
+}
+
+// ── Manual drag-to-reorder ─────────────────────────────────────────────────
+
+let _dragging = null;
+
+function startDrag(el, startX) {
+  setIgnoreIfChanged(false);  // ensure mouse events work during drag
+  el.classList.add('dragging');
+  _dragging = { el, startX, startLeft: el.offsetLeft };
+
+  const siblings = Array.from(frontsEl.children).filter(c => c !== el && c.dataset.session);
+  // Store midpoints of siblings for hit testing
+  const targets = siblings.map(s => ({
+    el: s,
+    mid: s.offsetLeft + s.offsetWidth / 2,
+    session: s.dataset.session
+  }));
+
+  function onMove(e) {
+    const dx = e.clientX - startX;
+    el.style.transform = `translateX(${dx}px)`;
+    el.style.zIndex = '100';
+
+    // Highlight drop target
+    const elMid = _dragging.startLeft + el.offsetWidth / 2 + dx;
+    siblings.forEach(s => s.classList.remove('drag-over'));
+    // Find which sibling we're overlapping
+    let closest = null, closestDist = Infinity;
+    for (const t of targets) {
+      const dist = Math.abs(elMid - t.mid);
+      if (dist < closestDist && dist < el.offsetWidth * 0.6) {
+        closestDist = dist;
+        closest = t;
+      }
+    }
+    if (closest) closest.el.classList.add('drag-over');
+  }
+
+  function onUp(e) {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+
+    el.style.transform = '';
+    el.style.zIndex = '';
+    el.classList.remove('dragging');
+    siblings.forEach(s => s.classList.remove('drag-over'));
+
+    // Find drop target
+    const dx = e.clientX - startX;
+    const elMid = _dragging.startLeft + el.offsetWidth / 2 + dx;
+    let closest = null, closestDist = Infinity;
+    for (const t of targets) {
+      const dist = Math.abs(elMid - t.mid);
+      if (dist < closestDist && dist < el.offsetWidth * 0.6) {
+        closestDist = dist;
+        closest = t;
+      }
+    }
+
+    if (closest) {
+      const fronts = state.data.fronts;
+      const from = fronts.findIndex(f => f.sessionName === el.dataset.session);
+      const to   = fronts.findIndex(f => f.sessionName === closest.session);
+      if (from !== -1 && to !== -1 && from !== to) {
+        const [moved] = fronts.splice(from, 1);
+        fronts.splice(to, 0, moved);
+        state.frontOrder = fronts.map(f => f.sessionName);
+        window.helm.saveFrontOrder(state.frontOrder);
+        reconcileFronts();
+      }
+    }
+
+    _dragging = null;
+    setTimeout(() => setIgnoreIfChanged(true), 50);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 // ── Agent rows reconciler ─────────────────────────────────────────────────

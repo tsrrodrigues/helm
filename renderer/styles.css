@@ -102,8 +102,8 @@ html, body {
 .front.has-wait { border: 1px solid rgba(255,165,2,.28); }
 .front.all-run  { border: 1px solid rgba(255,255,255,.09); }
 .front.shortcut-selected { box-shadow: 0 0 0 2px rgba(108,99,255,.5) inset; }
-.front.dragging  { opacity: .4; transform: scale(.97); }
-.front.drag-over { border-color: rgba(108,99,255,.6) !important; background: rgba(108,99,255,.04); }
+.front.dragging  { opacity: .6; position: relative; z-index: 100; }
+.front.drag-over { border-color: rgba(108,99,255,.6) !important; background: rgba(108,99,255,.06); }
 
 /* Front header */
 .front-head {
@@ -119,10 +119,13 @@ html, body {
   font-size: 13px;
   color: #2a2a3a;
   cursor: grab;
-  padding: 0 2px;
+  padding: 2px 4px;
   flex-shrink: 0;
   transition: color .15s;
+  border-radius: 3px;
 }
+.drag-handle:hover { color: #888; background: rgba(255,255,255,.06); }
+.drag-handle:active { cursor: grabbing; }
 .front-head:hover .drag-handle { color: #555; }
 
 .fname {
