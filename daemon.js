@@ -15,8 +15,12 @@ const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
 const ANTHROPIC_KEY_FILE = path.join(HOME, '.config', 'anthropic', 'api_key');
 
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
-const AGENT_COMMANDS = new Set(['claude', 'codex', 'node']);
 const IDLE_SHELLS = new Set(['bash', 'zsh', 'fish']);
+
+// Agent detection: command name can be a version string (e.g. "2.1.37"),
+// the binary name (e.g. "codex-aarch64-a"), or the expected name.
+// We use patterns instead of exact match.
+const AGENT_PATTERNS = [/claude/i, /codex/i, /^node$/i, /^\d+\.\d+\.\d+$/];
 
 // ── Status detection patterns ─────────────────────────────────────────────
 // All patterns are checked ONLY against the last N lines (not full scrollback)
@@ -43,6 +47,9 @@ const WAIT_PROMPTS = [
   /How should/i,              // Claude "How should I proceed?"
   /What would you/i,          // "What would you like..."
   /Do you want/i,             // "Do you want to..."
+  /\bfor shortcuts\b/i,       // Codex idle: "? for shortcuts 18% context left"
+  /context left\s*$/i,        // Codex idle prompt
+  /^\s*›\s/,                  // Codex prompt: "› Write tests for..."
 ];
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -166,7 +173,7 @@ function statusForPane(pane, output, now) {
   const prev = paneMemory.get(pane.paneId);
   const changed = !prev || prev.output !== output;
   const stableFor = prev && !changed ? now - prev.lastChangedAt : 0;
-  const isAgent = AGENT_COMMANDS.has(command);
+  const isAgent = AGENT_PATTERNS.some(rx => rx.test(command));
 
   // Priority 1: explicit wait prompt on last line → immediate waiting
   const explicitWait = isWaitPrompt(lastLine);
@@ -390,7 +397,7 @@ http.createServer(async (req, res) => {
     lines.push(`lastLine (clean): ${JSON.stringify(cleanLast)}`);
     lines.push(`isWaitPrompt: ${wait}`);
     lines.push(`hasRunIndicator: ${runInd}`);
-    lines.push(`isAgent: ${AGENT_COMMANDS.has(p.command.toLowerCase())}`);
+    lines.push(`isAgent: ${AGENT_PATTERNS.some(rx => rx.test(p.command.toLowerCase()))}`);
     lines.push(`isIgnored: ${IGNORE_COMMANDS.has(p.command.toLowerCase())}`);
     lines.push(`--- last 5 lines ---`);
     allLines.slice(-5).forEach((l, i) => lines.push(`  ${i}: ${JSON.stringify(l)}`));

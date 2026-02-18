@@ -109,7 +109,10 @@ function navigateTo(agent) {
 }
 
 function agentTag(command) {
-  return String(command || '').toLowerCase().includes('codex') ? 'codex' : 'claude';
+  const c = String(command || '').toLowerCase();
+  if (c.includes('codex')) return 'codex';
+  // Claude Code reports version as command (e.g. "2.1.37"), treat as claude
+  return 'claude';
 }
 
 function cls(el, name, on) { on ? el.classList.add(name) : el.classList.remove(name); }
