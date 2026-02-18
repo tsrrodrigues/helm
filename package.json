@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node start-all.js",
     "electron": "electron .",
-    "daemon": "node daemon.js"
+    "daemon": "node daemon.js",
+    "service": "bash scripts/install-service.sh",
+    "service-stop": "bash scripts/uninstall-service.sh"
   },
   "dependencies": {
     "electron": "^28.0.0",

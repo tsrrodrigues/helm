@@ -1,4 +1,4 @@
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -13,7 +13,7 @@ const HOME = os.homedir();
 const HELM_DIR = path.join(HOME, '.helm');
 const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
 const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
-const ANTHROPIC_KEY_FILE = path.join(HOME, '.config', 'anthropic', 'api_key');
+const PANE_TASKS_FILE = path.join(HELM_DIR, 'pane-tasks.json');
 
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
 const IDLE_SHELLS = new Set(['bash', 'zsh', 'fish']);
@@ -57,6 +57,10 @@ const prevPaneStatus = new Map();   // paneId → 'running' | 'waiting' | 'idle'
 const interactionStart = new Map(); // paneId → timestamp (start of current interaction)
 const lastRenameAt = new Map();     // sessionName → timestamp
 const RENAME_COOLDOWN_MS = 30000;
+const paneTaskNames = new Map();    // paneId → AI-generated short task name
+const lastTaskRenameAt = new Map(); // paneId → timestamp
+const TASK_RENAME_COOLDOWN_MS = 30000;
+const paneTaskInitialized = new Set(); // panes that already got an initial name
 let cachedState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
@@ -83,6 +87,17 @@ function writeConfirmed(sessionName) {
   const c = readConfirmed();
   c[sessionName] = true;
   writeJson(CONFIRMED_FILE, c);
+}
+
+function loadPaneTasks() {
+  const data = readJson(PANE_TASKS_FILE);
+  for (const [k, v] of Object.entries(data)) paneTaskNames.set(k, v);
+}
+
+function savePaneTasks() {
+  const obj = {};
+  for (const [k, v] of paneTaskNames) obj[k] = v;
+  writeJson(PANE_TASKS_FILE, obj);
 }
 
 // ── WezTerm binary detection ──────────────────────────────────────────────
@@ -314,12 +329,9 @@ async function weztermMap(sessions) {
   }
 }
 
-// ── AI naming ─────────────────────────────────────────────────────────────
+// ── AI naming (via Claude Code CLI) ──────────────────────────────────────
 
-function getApiKey() {
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY.trim();
-  try { return fs.readFileSync(ANTHROPIC_KEY_FILE, 'utf8').trim(); } catch { return null; }
-}
+const CLAUDE_BIN = '/Users/tiagorodrigues/.local/bin/claude';
 
 function cleanTaskName(raw, fallback) {
   const text = String(raw || '').replace(/[\r\n]+/g, ' ').trim();
@@ -327,43 +339,46 @@ function cleanTaskName(raw, fallback) {
   return text.replace(/^['"`]|['"`]$/g, '').slice(0, 40);
 }
 
-async function suggestName(sessionName, panePath, command) {
-  const key = getApiKey();
-  if (!key) return sessionName;
-
-  const prompt = `Suggest a short task name (2-4 words, title case) for a terminal session.\nDirectory: ${panePath || '(unknown)'}\nCommand: ${command || '(unknown)'}\nSession: ${sessionName}\nReply with ONLY the task name, nothing else.`;
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-3-haiku-20240307', max_tokens: 20, messages: [{ role: 'user', content: prompt }] })
+function askClaude(prompt) {
+  return new Promise((resolve) => {
+    const proc = spawn(CLAUDE_BIN, ['-p', '--model', 'haiku', '--no-session-persistence'], {
+      env: sysEnv, timeout: 30000, stdio: ['pipe', 'pipe', 'pipe']
     });
-    if (!response.ok) return sessionName;
-    const data = await response.json();
-    return cleanTaskName(data?.content?.[0]?.text, sessionName);
-  } catch { return sessionName; }
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d; });
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('close', (code) => {
+      if (code !== 0) { console.error('[helm] askClaude error:', stderr.trim()); resolve(null); return; }
+      const result = stdout.trim();
+      console.log('[helm] askClaude result:', result);
+      resolve(result || null);
+    });
+    proc.on('error', (e) => { console.error('[helm] askClaude spawn error:', e.message); resolve(null); });
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
+}
+
+async function suggestName(sessionName, panePath, command) {
+  const prompt = `Suggest a short task name (2-4 words, title case) for a terminal session.\nDirectory: ${panePath || '(unknown)'}\nCommand: ${command || '(unknown)'}\nSession: ${sessionName}\nReply with ONLY the task name, nothing else.`;
+  const raw = await askClaude(prompt);
+  return cleanTaskName(raw, sessionName);
 }
 
 async function suggestNameFromOutput(sessionName, output, status) {
-  const key = getApiKey();
-  if (!key) return sessionName;
-
   const lines = output.split('\n').filter(Boolean).slice(-20);
   const recentOutput = lines.join('\n').slice(-1500);
-
   const prompt = `You name terminal sessions. Based on the output below from an AI coding agent, suggest a short name (2-4 words, title case) that describes the current task.\n\nStatus: ${status}\nRecent output:\n${recentOutput}\n\nReply with ONLY the name, nothing else.`;
+  const raw = await askClaude(prompt);
+  return cleanTaskName(raw, sessionName);
+}
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-3-haiku-20240307', max_tokens: 20, messages: [{ role: 'user', content: prompt }] })
-    });
-    if (!response.ok) return sessionName;
-    const data = await response.json();
-    return cleanTaskName(data?.content?.[0]?.text, sessionName);
-  } catch { return sessionName; }
+async function suggestPaneTask(paneId, output, status) {
+  const lines = output.split('\n').filter(Boolean).slice(-20);
+  const recentOutput = lines.join('\n').slice(-1500);
+  const prompt = `Summarize what this AI coding agent is doing in 3-5 words max (title case). Be specific about the action (e.g. "Fixing Auth Bug", "Adding Unit Tests", "Refactoring API Routes").\n\nStatus: ${status}\nRecent terminal output:\n${recentOutput}\n\nReply with ONLY the summary, nothing else.`;
+  const raw = await askClaude(prompt);
+  return raw ? cleanTaskName(raw, null) : null;
 }
 
 // ── Build state ───────────────────────────────────────────────────────────
@@ -412,20 +427,39 @@ async function buildState() {
       interactionStart.delete(pane.paneId);
     }
     prevPaneStatus.set(pane.paneId, st.status);
-    if (prevStatus && prevStatus !== st.status && !confirmed[pane.sessionName]) {
-      const lastRename = lastRenameAt.get(pane.sessionName) || 0;
-      if (now - lastRename >= RENAME_COOLDOWN_MS) {
-        lastRenameAt.set(pane.sessionName, now);
-        console.log(`[helm] status change ${pane.sessionName}: ${prevStatus} → ${st.status}, renaming...`);
-        suggestNameFromOutput(pane.sessionName, output, st.status).then((suggested) => {
-          const cur = readNames();
-          const conf = readConfirmed();
-          if (!conf[pane.sessionName]) {
-            cur[pane.sessionName] = suggested;
-            writeNames(cur);
-          }
+    if (prevStatus && prevStatus !== st.status) {
+      // Rename session (fire-and-forget)
+      if (!confirmed[pane.sessionName]) {
+        const lastRename = lastRenameAt.get(pane.sessionName) || 0;
+        if (now - lastRename >= RENAME_COOLDOWN_MS) {
+          lastRenameAt.set(pane.sessionName, now);
+          console.log(`[helm] status change ${pane.sessionName}: ${prevStatus} → ${st.status}, renaming...`);
+          suggestNameFromOutput(pane.sessionName, output, st.status).then((suggested) => {
+            const cur = readNames();
+            const conf = readConfirmed();
+            if (!conf[pane.sessionName]) {
+              cur[pane.sessionName] = suggested;
+              writeNames(cur);
+            }
+          });
+        }
+      }
+      // Rename pane task (fire-and-forget)
+      const lastTask = lastTaskRenameAt.get(pane.paneId) || 0;
+      if (now - lastTask >= TASK_RENAME_COOLDOWN_MS) {
+        lastTaskRenameAt.set(pane.paneId, now);
+        suggestPaneTask(pane.paneId, output, st.status).then((name) => {
+          if (name) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
         });
       }
+    }
+
+    // Generate initial task name for panes that don't have one yet
+    if (!paneTaskNames.has(pane.paneId) && !paneTaskInitialized.has(pane.paneId) && st.status !== 'idle') {
+      paneTaskInitialized.add(pane.paneId);
+      suggestPaneTask(pane.paneId, output, st.status).then((name) => {
+        if (name) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
+      });
     }
 
     if (!frontsMap.has(pane.sessionName)) {
@@ -440,14 +474,12 @@ async function buildState() {
 
     const lines = output.split('\n').filter(Boolean);
     const lastOutput = (lines[lines.length - 1] || '').trim().slice(0, 140);
-    // Task: try to find a meaningful line (first non-empty, non-prompt line)
-    const taskLine = lines.find(l => l.trim().length > 10 && !/^[>❯$]\s*$/.test(l.trim())) || '';
 
     frontsMap.get(pane.sessionName).agents.push({
       paneId: pane.paneId,
       windowName: pane.windowName,
       command: pane.command,
-      task: taskLine.trim().slice(0, 80),
+      task: paneTaskNames.get(pane.paneId) || pane.windowName,
       status: st.status,
       lastOutput,
       waitingSince: st.waitingSince,
@@ -532,6 +564,7 @@ http.createServer(async (req, res) => {
 console.log('Debug endpoint: http://127.0.0.1:7374/debug');
 
 ensureFiles();
+loadPaneTasks();
 setInterval(tick, POLL_MS);
 tick();
 

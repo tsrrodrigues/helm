@@ -1,20 +1,68 @@
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const path = require('path');
 const net = require('net');
+const fs = require('fs');
 
 const cwd = __dirname;
+const electronApp = path.join(cwd, 'node_modules', 'electron', 'dist', 'Electron.app');
 
-const daemon = spawn(process.execPath, [path.join(cwd, 'daemon.js')], {
-  cwd,
-  stdio: 'inherit'
-});
+// ── Child process management ─────────────────────────────────────────────
 
-daemon.on('exit', (code) => {
-  console.log(`daemon exited (${code})`);
-  process.exit(code || 0);
-});
+let daemonProc = null;
+let shuttingDown = false;
 
-// Wait for daemon WebSocket to be ready before launching Electron
+function spawnDaemon() {
+  daemonProc = spawn(process.execPath, [path.join(cwd, 'daemon.js')], { cwd, stdio: 'inherit' });
+  daemonProc.on('exit', (code) => {
+    if (shuttingDown) return;
+    console.log(`[helm] daemon exited (${code})`);
+  });
+}
+
+function launchElectron() {
+  // Use macOS `open` to launch Electron as a proper GUI app.
+  // This works under launchd (spawn doesn't because launchd lacks GUI context).
+  execFile('open', ['-n', electronApp, '--args', cwd], (err) => {
+    if (err) console.error('[helm] failed to launch Electron:', err.message);
+  });
+}
+
+function restartDaemon() {
+  console.log('[helm] restarting daemon...');
+  if (daemonProc && !daemonProc.killed) {
+    daemonProc.once('exit', () => { spawnDaemon(); waitForPort(7373, 3000); });
+    daemonProc.kill('SIGTERM');
+  } else {
+    spawnDaemon();
+  }
+}
+
+function restartElectron() {
+  console.log('[helm] restarting electron...');
+  // Kill existing Electron instances for this app, then relaunch
+  execFile('pkill', ['-f', 'Electron.app.*helm'], () => {
+    setTimeout(launchElectron, 500);
+  });
+}
+
+// ── File watcher (live reload) ───────────────────────────────────────────
+// fs.watchFile uses stat polling — survives inode replacement (atomic writes from editors).
+
+function watchFiles() {
+  const opts = { interval: 1000 };
+  fs.watchFile(path.join(cwd, 'daemon.js'), opts, (curr, prev) => {
+    if (curr.mtimeMs !== prev.mtimeMs) restartDaemon();
+  });
+  fs.watchFile(path.join(cwd, 'main.js'), opts, (curr, prev) => {
+    if (curr.mtimeMs !== prev.mtimeMs) restartElectron();
+  });
+  fs.watchFile(path.join(cwd, 'preload.js'), opts, (curr, prev) => {
+    if (curr.mtimeMs !== prev.mtimeMs) restartElectron();
+  });
+}
+
+// ── Wait for port ────────────────────────────────────────────────────────
+
 function waitForPort(port, maxMs = 5000) {
   const start = Date.now();
   return new Promise((resolve) => {
@@ -30,16 +78,12 @@ function waitForPort(port, maxMs = 5000) {
   });
 }
 
+// ── Bootstrap ────────────────────────────────────────────────────────────
+
+spawnDaemon();
+
 waitForPort(7373).then((ok) => {
   if (!ok) console.warn('[helm] daemon not ready after 5s, starting Electron anyway');
-
-  const electronBin = process.platform === 'win32'
-    ? path.join(cwd, 'node_modules', '.bin', 'electron.cmd')
-    : path.join(cwd, 'node_modules', '.bin', 'electron');
-
-  const app = spawn(electronBin, ['.'], { cwd, stdio: 'inherit' });
-  app.on('exit', (code) => {
-    if (!daemon.killed) daemon.kill('SIGTERM');
-    process.exit(code || 0);
-  });
+  launchElectron();
+  watchFiles();
 });

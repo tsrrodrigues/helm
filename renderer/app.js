@@ -5,7 +5,8 @@ const state = {
   inlineEditSession: null,
   shortcutMode: false,
   frontOrder: [],
-  openFronts: new Set()
+  openFronts: new Set(),
+  dismissedPanes: new Set()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -59,16 +60,27 @@ window.helm.onStateUpdate((next) => {
   if (!next) return;
   applyFrontOrder(next);
 
-  // Auto-open panel when an agent transitions to "waiting"
+  // Build set of previously waiting panes
   const prevWaiting = new Set();
   for (const f of (state.data.fronts || [])) {
     for (const a of f.agents) { if (a.status === 'waiting') prevWaiting.add(a.paneId); }
   }
-  let newWaiting = false;
+
+  // Build set of currently waiting panes
+  const nowWaiting = new Set();
   for (const f of (next.fronts || [])) {
-    for (const a of f.agents) {
-      if (a.status === 'waiting' && !prevWaiting.has(a.paneId)) newWaiting = true;
-    }
+    for (const a of f.agents) { if (a.status === 'waiting') nowWaiting.add(a.paneId); }
+  }
+
+  // Clear dismiss for panes that left waiting (so next time they wait it's a fresh alert)
+  for (const paneId of state.dismissedPanes) {
+    if (!nowWaiting.has(paneId)) state.dismissedPanes.delete(paneId);
+  }
+
+  // Auto-open panel when an agent transitions to "waiting" (ignore dismissed)
+  let newWaiting = false;
+  for (const paneId of nowWaiting) {
+    if (!prevWaiting.has(paneId) && !state.dismissedPanes.has(paneId)) newWaiting = true;
   }
   if (newWaiting) {
     for (const f of (next.fronts || [])) state.openFronts.add(f.sessionName);
@@ -124,6 +136,7 @@ function resizeToContent() {
 }
 
 function navigateTo(agent) {
+  state.dismissedPanes.add(agent.paneId);
   window.helm.navigateToPane(agent.sessionName, agent.windowName, agent.paneId, agent.weztermTabId);
   state.shortcutMode = false;
   $('shortcut-hint').hidden = true;
@@ -155,22 +168,28 @@ function escapeHtml(text) {
 // ── Main render ───────────────────────────────────────────────────────────
 
 function render() {
-  const waiting = state.data.summary?.waiting || 0;
+  // Effective waiting = waiting agents NOT dismissed
+  let effectiveWaiting = 0;
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) effectiveWaiting++;
+    }
+  }
 
-  setText($('pill-text'), waiting > 0 ? `${waiting} aguardando` : 'tudo rodando');
-  pill.className = waiting > 0 ? 'pill' : 'pill all-ok';
+  setText($('pill-text'), effectiveWaiting > 0 ? `${effectiveWaiting} aguardando` : 'tudo rodando');
+  pill.className = effectiveWaiting > 0 ? 'pill' : 'pill all-ok';
 
   // Pill dots
   const dots = [];
   const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
-  const waitCount = Math.min(2, waiting);
+  const waitCount = Math.min(2, effectiveWaiting);
   for (let i = 0; i < waitCount; i++) dots.push('<div class="pdot wait"></div>');
   for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
   $('pill-dots').innerHTML = dots.join('');
 
   setText($('sum-fronts'), String(state.data.summary?.total || 0));
   setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
-  setText($('sum-waiting'), String(waiting));
+  setText($('sum-waiting'), String(effectiveWaiting));
   $('shortcut-hint').hidden = !state.shortcutMode;
 
   reconcileFronts();
@@ -210,10 +229,10 @@ function createFrontEl(front) {
   el.dataset.session = front.sessionName;
   if (state.openFronts.has(front.sessionName)) el.classList.add('open');
 
-  const wait = front.agents.filter(a => a.status === 'waiting').length;
+  const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
 
-  el.className = frontClasses(wait) + (state.openFronts.has(front.sessionName) ? ' open' : '');
+  el.className = frontClasses(effectiveWait) + (state.openFronts.has(front.sessionName) ? ' open' : '');
 
   el.innerHTML = `
     <div class="front-head">
@@ -224,9 +243,9 @@ function createFrontEl(front) {
         <button class="name-btn" data-action="edit">editar</button>
       </div>
       <div class="fagents-summary">
-        ${wait ? '<div class="fas-dot wait"></div>' : ''}
+        ${effectiveWait ? '<div class="fas-dot wait"></div>' : ''}
         ${run  ? '<div class="fas-dot run"></div>' : ''}
-        <span class="fas-count ${wait ? 'alert' : ''}">${wait} aguardando · ${run} rodando</span>
+        <span class="fas-count ${effectiveWait ? 'alert' : ''}">${effectiveWait} aguardando · ${run} rodando</span>
       </div>
     </div>
     <div class="fdiv"></div>
@@ -239,18 +258,18 @@ function createFrontEl(front) {
 }
 
 function patchFrontEl(el, front) {
-  const wait = front.agents.filter(a => a.status === 'waiting').length;
+  const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
   const isOpen = state.openFronts.has(front.sessionName);
   const isSelected = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane?.paneId);
 
-  el.className = frontClasses(wait) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
+  el.className = frontClasses(effectiveWait) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
 
   // Summary
   const fasCount = el.querySelector('.fas-count');
   if (fasCount) {
-    setText(fasCount, `${wait} aguardando · ${run} rodando`);
-    cls(fasCount, 'alert', wait > 0);
+    setText(fasCount, `${effectiveWait} aguardando · ${run} rodando`);
+    cls(fasCount, 'alert', effectiveWait > 0);
   }
 
   // Update summary dots
@@ -260,11 +279,11 @@ function patchFrontEl(el, front) {
     // Simple approach: rebuild dots only if count changed
     const hasWaitDot = Array.from(dots).some(d => d.classList.contains('wait'));
     const hasRunDot  = Array.from(dots).some(d => d.classList.contains('run'));
-    if ((wait > 0) !== hasWaitDot || (run > 0) !== hasRunDot) {
+    if ((effectiveWait > 0) !== hasWaitDot || (run > 0) !== hasRunDot) {
       // Remove old dots
       dots.forEach(d => d.remove());
       // Insert before fas-count
-      if (wait > 0) { const d = document.createElement('div'); d.className = 'fas-dot wait'; summary.insertBefore(d, fasCount); }
+      if (effectiveWait > 0) { const d = document.createElement('div'); d.className = 'fas-dot wait'; summary.insertBefore(d, fasCount); }
       if (run > 0)  { const d = document.createElement('div'); d.className = 'fas-dot run';  summary.insertBefore(d, fasCount); }
     }
   }
@@ -284,8 +303,8 @@ function patchFrontEl(el, front) {
   reconcileAgentRows(el.querySelector('.agents'), front);
 }
 
-function frontClasses(waitCount) {
-  return `front ${waitCount > 0 ? 'has-wait' : 'all-run'}`;
+function frontClasses(effectiveWaitCount) {
+  return `front ${effectiveWaitCount > 0 ? 'has-wait' : 'all-run'}`;
 }
 
 // ── Front events (attached once) ──────────────────────────────────────────
@@ -473,11 +492,13 @@ function reconcileAgentRows(agentsEl, front) {
 
 function createAgentRow(agent, front) {
   const row = document.createElement('div');
-  row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
+  const isWait = agent.status === 'waiting';
+  const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
+  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}`;
   row.dataset.pane = agent.paneId;
   const tag = agentTag(agent.command);
   row.innerHTML = `
-    <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
+    <div class="ar-dot ${isWait ? 'wait' : 'run'}"></div>
     <div class="ar-body">
       <div class="ar-top">
         <span class="ar-agent ${tag}">${escapeHtml(tag)}</span>
@@ -485,8 +506,14 @@ function createAgentRow(agent, front) {
       </div>
       <div class="ar-name">${escapeHtml(agent.task || agent.windowName)}</div>
     </div>
+    <div class="ar-dismiss" data-pane="${agent.paneId}" title="marcar como visto">✓</div>
     <div class="ar-nav">ir →</div>
   `;
+  row.querySelector('.ar-dismiss').addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.dismissedPanes.add(agent.paneId);
+    render();
+  });
   row.addEventListener('click', (e) => {
     e.stopPropagation();
     navigateTo({ ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId });
@@ -496,7 +523,9 @@ function createAgentRow(agent, front) {
 
 function patchAgentRow(row, agent, front) {
   const isWait = agent.status === 'waiting';
+  const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
   cls(row, 'is-wait', isWait);
+  cls(row, 'is-dismissed', isDismissed);
 
   const dot = row.querySelector('.ar-dot');
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
