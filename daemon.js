@@ -6,7 +6,8 @@ const WebSocket = require('ws');
 
 const PORT = 7373;
 const POLL_MS = 2000;
-const WAIT_STABLE_MS = 6000;
+const WAIT_WITH_PROMPT_MS = 3000;   // stable + recognized prompt → waiting
+const WAIT_NO_PROMPT_MS = 8000;     // stable + no prompt → waiting (fallback)
 
 const HOME = os.homedir();
 const HELM_DIR = path.join(HOME, '.helm');
@@ -47,9 +48,6 @@ const WAIT_PROMPTS = [
   /How should/i,              // Claude "How should I proceed?"
   /What would you/i,          // "What would you like..."
   /Do you want/i,             // "Do you want to..."
-  /\bfor shortcuts\b/i,       // Codex idle: "? for shortcuts 18% context left"
-  /context left\s*$/i,        // Codex idle prompt
-  /^\s*›\s/,                  // Codex prompt: "› Write tests for..."
 ];
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -175,25 +173,23 @@ function statusForPane(pane, output, now) {
   const stableFor = prev && !changed ? now - prev.lastChangedAt : 0;
   const isAgent = AGENT_PATTERNS.some(rx => rx.test(command));
 
-  // Priority 1: explicit wait prompt on last line → immediate waiting
   const explicitWait = isWaitPrompt(lastLine);
-
-  // Priority 2: active running indicators in recent lines
   const activelyRunning = hasRunIndicator(recentLines);
 
   let status;
   let waitingSince = prev?.waitingSince || null;
 
-  if (isAgent && explicitWait && !activelyRunning) {
-    // Clear wait prompt visible, no spinners → waiting immediately
-    status = 'waiting';
-    waitingSince = waitingSince || now;
-  } else if (activelyRunning || changed) {
-    // Spinners visible or output just changed → running
+  if (activelyRunning || changed) {
+    // Spinners visible OR output just changed → always running
+    // No prompt can override this — output activity is the strongest signal
     status = 'running';
     waitingSince = null;
-  } else if (isAgent && stableFor >= WAIT_STABLE_MS) {
-    // Output hasn't changed for a while → probably waiting (fallback)
+  } else if (isAgent && !changed && explicitWait && stableFor >= WAIT_WITH_PROMPT_MS) {
+    // Output stable for 3s + recognized wait prompt → waiting
+    status = 'waiting';
+    waitingSince = waitingSince || now - stableFor;
+  } else if (isAgent && !changed && stableFor >= WAIT_NO_PROMPT_MS) {
+    // Output stable for 8s without any recognized prompt → probably waiting (fallback)
     status = 'waiting';
     waitingSince = waitingSince || now - stableFor;
   } else {
