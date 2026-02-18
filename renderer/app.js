@@ -64,9 +64,12 @@ window.helm.getState().then((initial) => {
   render();
 }).catch(() => render());
 
-// Load front order from disk on startup
+// Load front order from disk on startup — re-render if data already arrived
 window.helm.getFrontOrder().then((order) => {
-  if (Array.isArray(order) && order.length) state.frontOrder = order;
+  if (Array.isArray(order) && order.length) {
+    state.frontOrder = order;
+    if (state.data.fronts.length) { applyFrontOrder(state.data); render(); }
+  }
 }).catch(() => {});
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -256,14 +259,17 @@ function frontClasses(waitCount) {
 // ── Front events (attached once) ──────────────────────────────────────────
 
 function attachFrontEvents(el, front) {
-  // Drag
+  // Drag — force mouse events on during drag (transparent window can swallow drag events)
   el.addEventListener('dragstart', (e) => {
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
+    setIgnoreIfChanged(false);
   });
   el.addEventListener('dragend', () => {
     el.classList.remove('dragging');
     document.querySelectorAll('.front.drag-over').forEach(f => f.classList.remove('drag-over'));
+    // Restore mouse passthrough after a small delay (let drop handler fire first)
+    setTimeout(() => setIgnoreIfChanged(true), 100);
   });
   el.addEventListener('dragover', (e) => {
     e.preventDefault();
