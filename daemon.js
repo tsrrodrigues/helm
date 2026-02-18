@@ -17,8 +17,27 @@ const ANTHROPIC_KEY_FILE = path.join(HOME, '.config', 'anthropic', 'api_key');
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
 const AGENT_COMMANDS = new Set(['claude', 'codex', 'node']);
 const IDLE_SHELLS = new Set(['bash', 'zsh', 'fish']);
-const RUN_PATTERNS = [/✻/, /◆/, /Thinking/i, /Reading/i, /Writing/i, /Analyzing/i, /Running/i];
-const WAIT_HINTS = [/Awaiting/i, /Done/i, /✔/, /How should/i, />\s*$/, /❯\s*$/, /\$\s*$/, /\?\s*$/];
+// Spinner/symbol patterns: check full output (very specific, won't false-positive in diff content)
+const RUN_PATTERNS = [/✻/, /◆/];
+// Text-based running indicators: only checked against the last few lines to avoid matching old diff content
+const RUN_TEXT_PATTERNS = [/Thinking\.\.\./i, /Reading\.\.\./i, /Writing\.\.\./i, /Analyzing\.\.\./i, /Running\.\.\./i, /Searching\.\.\./i];
+// Explicit wait prompts — immediate detection, no stability timer needed
+const WAIT_HINTS = [
+  /Awaiting/i,
+  /Done/i,
+  /✔/,
+  /How should/i,
+  />\s*$/,
+  /❯\s*$/,
+  /\$\s*$/,
+  /\?\s*$/,
+  /accept edits/i,          // Claude Code: ">> accept edits on (shift+tab to cycle)"
+  /shift\+tab to cycle/i,   // Claude Code edit acceptance prompt
+  /ctrl\+t to hide/i,       // Claude Code task bar hint
+  /to exit plan mode/i,     // Claude Code plan mode
+  /\(y\/n\)/i,              // Generic yes/no confirm
+  /Press Enter/i,           // Generic press-enter prompt
+];
 
 const paneMemory = new Map();
 let aiSuggestedSessions = new Set();
@@ -123,7 +142,10 @@ function looksWaiting(lastLine) {
 
 function statusForPane(pane, output, now) {
   const command = pane.command.toLowerCase();
-  const lastLine = output.split('\n').filter(Boolean).pop() || '';
+  const allLines = output.split('\n').filter(Boolean);
+  const lastLine = allLines[allLines.length - 1] || '';
+  // Only check text-based RUN patterns against recent lines to avoid false positives from diff content
+  const recentOutput = allLines.slice(-6).join('\n');
 
   if (IGNORE_COMMANDS.has(command)) return null;
 
@@ -135,19 +157,34 @@ function statusForPane(pane, output, now) {
   const changed = !prev || prev.output !== output;
 
   let waitingSince = prev?.waitingSince || null;
-  let status = 'running';
-
-  if (RUN_PATTERNS.some((rx) => rx.test(output)) || changed) {
-    status = 'running';
-    waitingSince = null;
-  }
-
   const stableFor = prev ? now - prev.lastChangedAt : 0;
   const isAgentProcess = AGENT_COMMANDS.has(command);
 
-  if (isAgentProcess && !changed && stableFor >= WAIT_STABLE_MS && looksWaiting(lastLine)) {
+  // Explicit wait prompt on last line → detect immediately (no stability timer needed)
+  const hasExplicitWaitPrompt = looksWaiting(lastLine);
+
+  // Running indicators: spinners anywhere in output, OR text patterns in recent lines only
+  const isActivelyRunning =
+    RUN_PATTERNS.some((rx) => rx.test(output)) ||
+    RUN_TEXT_PATTERNS.some((rx) => rx.test(recentOutput));
+
+  let status;
+
+  if (isAgentProcess && hasExplicitWaitPrompt) {
+    // Highest priority: explicit wait prompt visible → always waiting
     status = 'waiting';
-    waitingSince = waitingSince || (prev?.waitingSince || now - stableFor);
+    waitingSince = waitingSince || prev?.waitingSince || now;
+  } else if (isActivelyRunning || changed) {
+    // Spinner visible or output just changed → running
+    status = 'running';
+    waitingSince = null;
+  } else if (isAgentProcess && !changed && stableFor >= WAIT_STABLE_MS) {
+    // Stable output for long enough → waiting (fallback for unrecognized prompts)
+    status = 'waiting';
+    waitingSince = waitingSince || prev?.waitingSince || now - stableFor;
+  } else {
+    status = 'running';
+    waitingSince = null;
   }
 
   paneMemory.set(pane.paneId, {
