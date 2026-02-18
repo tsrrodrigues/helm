@@ -25,7 +25,7 @@ html, body {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,165,2,0.06);
-  cursor: pointer;
+  cursor: pointer !important;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -33,6 +33,7 @@ html, body {
   min-height: 38px;
   transition: border-color 0.2s;
 }
+.pill *, .pill *::before, .pill *::after { cursor: pointer !important; }
 .pill:hover { border-color: rgba(255, 165, 2, 0.5); }
 
 .pill.all-ok {
