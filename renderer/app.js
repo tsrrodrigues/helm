@@ -4,11 +4,12 @@ const state = {
   selectedPane: null,
   inlineEditSession: null,
   shortcutMode: false,
-  frontOrder: []   // persists user-defined order across daemon updates
+  frontOrder: [],    // persists user-defined order
+  openFronts: new Set()  // per-front open state (survives re-renders)
 };
 
 const $ = (id) => document.getElementById(id);
-const pill = $('pill');
+const pill  = $('pill');
 const panel = $('panel');
 const frontsEl = $('fronts');
 
@@ -81,6 +82,8 @@ window.helm.getState().then((initial) => {
   render();
 }).catch(() => render());
 
+// ── Helpers ──────────────────────────────────────────────────────────────
+
 function togglePanel(force) {
   state.open = typeof force === 'boolean' ? force : !state.open;
   panel.hidden = !state.open;
@@ -93,7 +96,6 @@ function resizeToContent() {
     window.helm.resizeWindow(52);
     return;
   }
-  // Dois frames: primeiro o DOM renderiza, depois medimos o tamanho real
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       const h = Math.min(560, (panel.scrollHeight || 200) + 60);
@@ -114,165 +116,12 @@ function agentTag(command) {
   return 'claude';
 }
 
-function render() {
-  const waiting = state.data.summary?.waiting || 0;
-  $('pill-text').textContent = waiting > 0 ? `${waiting} aguardando` : 'tudo rodando';
-  pill.className = waiting > 0 ? 'pill' : 'pill all-ok';
+function cls(el, name, on) {
+  on ? el.classList.add(name) : el.classList.remove(name);
+}
 
-  const dots = [];
-  const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
-  const waitCount = Math.min(2, waiting);
-  for (let i = 0; i < waitCount; i++) dots.push('<div class="pdot wait"></div>');
-  for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
-  $('pill-dots').innerHTML = dots.join('');
-
-  $('sum-fronts').textContent = state.data.summary?.total || 0;
-  $('sum-agents').textContent = state.data.summary?.totalAgents || 0;
-  $('sum-waiting').textContent = waiting;
-
-  $('shortcut-hint').hidden = !state.shortcutMode;
-
-  frontsEl.innerHTML = '';
-  // Drag state
-  let dragSrc = null;
-
-  for (const front of state.data.fronts || []) {
-    const waitInFront = front.agents.filter((a) => a.status === 'waiting').length;
-    const runInFront = front.agents.filter((a) => a.status === 'running').length;
-    const isSelected = state.selectedPane && front.agents.some((a) => a.paneId === state.selectedPane.paneId);
-
-    const frontEl = document.createElement('div');
-    frontEl.className = `front ${waitInFront ? 'has-wait' : 'all-run'} ${state.open ? 'open' : ''} ${isSelected ? 'shortcut-selected' : ''}`;
-    frontEl.setAttribute('draggable', 'true');
-    frontEl.dataset.session = front.sessionName;
-
-    frontEl.addEventListener('dragstart', (e) => {
-      dragSrc = frontEl;
-      frontEl.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    frontEl.addEventListener('dragend', () => {
-      frontEl.classList.remove('dragging');
-      document.querySelectorAll('.front').forEach(f => f.classList.remove('drag-over'));
-    });
-    frontEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      if (dragSrc && dragSrc !== frontEl) frontEl.classList.add('drag-over');
-    });
-    frontEl.addEventListener('dragleave', () => frontEl.classList.remove('drag-over'));
-    frontEl.addEventListener('drop', (e) => {
-      e.preventDefault();
-      frontEl.classList.remove('drag-over');
-      if (!dragSrc || dragSrc === frontEl) return;
-      const fronts = state.data.fronts;
-      const fromIdx = fronts.findIndex(f => f.sessionName === dragSrc.dataset.session);
-      const toIdx   = fronts.findIndex(f => f.sessionName === frontEl.dataset.session);
-      if (fromIdx !== -1 && toIdx !== -1) {
-        const [moved] = fronts.splice(fromIdx, 1);
-        fronts.splice(toIdx, 0, moved);
-        // Persist order so daemon updates don't reset it
-        state.frontOrder = fronts.map(f => f.sessionName);
-        window.helm.saveFrontOrder(state.frontOrder);
-        render();
-      }
-      dragSrc = null;
-    });
-
-    const showEdit = state.inlineEditSession === front.sessionName;
-    const displayName = front.name || front.sessionName;
-
-    frontEl.innerHTML = `
-      <div class="front-head">
-        <div class="fh-row">
-          <span class="drag-handle" draggable="false">⠿</span>
-        ${showEdit ? `
-            <div class="fname-edit">
-              <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
-              <button class="name-btn ok" data-action="save">✓ ok</button>
-            </div>
-          ` : `
-            <span class="fname">${escapeHtml(displayName)}</span>
-            ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
-            <button class="name-btn" data-action="edit">editar</button>
-          `}
-        </div>
-        <div class="fagents-summary">
-          ${waitInFront ? '<div class="fas-dot wait"></div>' : ''}
-          ${runInFront ? '<div class="fas-dot run"></div>' : ''}
-          <span class="fas-count ${waitInFront ? 'alert' : ''}">${waitInFront} aguardando · ${runInFront} rodando</span>
-        </div>
-      </div>
-      <div class="fdiv"></div>
-      <div class="agents"></div>
-    `;
-
-    frontEl.querySelector('.front-head').addEventListener('click', (e) => {
-      if (e.target.closest('.name-btn') || e.target.closest('.fname-input')) return;
-      frontEl.classList.toggle('open');
-      resizeToContent();
-    });
-
-    const agentsEl = frontEl.querySelector('.agents');
-    for (const agent of front.agents) {
-      const row = document.createElement('div');
-      row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
-      row.innerHTML = `
-        <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
-        <div class="ar-body">
-          <div class="ar-top">
-            <span class="ar-agent ${agentTag(agent.command)}">${escapeHtml(agentTag(agent.command))}</span>
-            <span class="ar-task">${escapeHtml(agent.task || agent.windowName)}</span>
-          </div>
-          <div class="ar-preview ${agent.status === 'waiting' ? 'wait-prev' : ''}">${escapeHtml(agent.lastOutput || '')}</div>
-        </div>
-        <div class="ar-nav">ir →</div>
-      `;
-      row.addEventListener('click', (e) => {
-        e.stopPropagation();
-        navigateTo({ ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId });
-      });
-      agentsEl.appendChild(row);
-    }
-
-    const editBtn = frontEl.querySelector('[data-action="edit"]');
-    if (editBtn) editBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.inlineEditSession = front.sessionName;
-      render();
-    });
-
-    const confirmBtn = frontEl.querySelector('[data-action="confirm"]');
-    if (confirmBtn) confirmBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      window.helm.confirmName(front.sessionName, displayName);
-    });
-
-    const saveBtn = frontEl.querySelector('[data-action="save"]');
-    if (saveBtn) saveBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const input = frontEl.querySelector('.fname-input');
-      const name = input.value.trim() || front.sessionName;
-      // Update local display immediately — don't wait for daemon
-      const f = state.data.fronts.find(x => x.sessionName === front.sessionName);
-      if (f) { f.name = name; f.aiSuggested = false; }
-      window.helm.confirmName(front.sessionName, name);
-      state.inlineEditSession = null;
-      render();
-    });
-
-    // Allow Escape to cancel editing
-    const inputEl = frontEl.querySelector('.fname-input');
-    if (inputEl) {
-      inputEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
-        if (e.key === 'Enter')  { e.stopPropagation(); saveBtn && saveBtn.click(); }
-      });
-      // Focus the input when edit mode opens
-      setTimeout(() => inputEl.focus(), 0);
-    }
-
-    frontsEl.appendChild(frontEl);
-  }
+function setText(el, text) {
+  if (el && el.textContent !== text) el.textContent = text;
 }
 
 function escapeHtml(text) {
@@ -282,4 +131,316 @@ function escapeHtml(text) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+// ── Main render ───────────────────────────────────────────────────────────
+// Reconciliation approach: never wipe the DOM, only patch what changed.
+// This eliminates flicker from complete re-renders on every daemon poll.
+
+function render() {
+  const waiting = state.data.summary?.waiting || 0;
+
+  // Pill label + class
+  setText($('pill-text'), waiting > 0 ? `${waiting} aguardando` : 'tudo rodando');
+  pill.className = waiting > 0 ? 'pill' : 'pill all-ok';
+
+  // Pill dots (small, OK to rebuild)
+  const dots = [];
+  const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
+  const waitCount = Math.min(2, waiting);
+  for (let i = 0; i < waitCount; i++) dots.push('<div class="pdot wait"></div>');
+  for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
+  $('pill-dots').innerHTML = dots.join('');
+
+  setText($('sum-fronts'), state.data.summary?.total || 0);
+  setText($('sum-agents'), state.data.summary?.totalAgents || 0);
+  setText($('sum-waiting'), waiting);
+
+  $('shortcut-hint').hidden = !state.shortcutMode;
+
+  patchFronts();
+}
+
+// ── Fronts reconciler ─────────────────────────────────────────────────────
+
+function patchFronts() {
+  const fronts = state.data.fronts || [];
+
+  // Index existing elements by session name
+  const bySession = new Map();
+  for (const el of Array.from(frontsEl.children)) {
+    if (el.dataset.session) bySession.set(el.dataset.session, el);
+  }
+
+  // Remove fronts that disappeared from state
+  for (const [name, el] of bySession) {
+    if (!fronts.find(f => f.sessionName === name)) {
+      el.remove();
+      bySession.delete(name);
+    }
+  }
+
+  // Update or create each front in correct order
+  fronts.forEach((front, idx) => {
+    let el = bySession.get(front.sessionName);
+    if (!el) {
+      el = buildFrontEl(front);
+      bySession.set(front.sessionName, el);
+    } else {
+      patchFrontEl(el, front);
+    }
+    // Reorder DOM node if needed (cheap if already in place)
+    const atIdx = frontsEl.children[idx];
+    if (atIdx !== el) frontsEl.insertBefore(el, atIdx || null);
+  });
+}
+
+function buildFrontEl(front) {
+  const el = document.createElement('div');
+  el.dataset.session = front.sessionName;
+
+  // Restore open state from persistent set
+  if (state.openFronts.has(front.sessionName)) el.classList.add('open');
+
+  // Front header HTML (rebuilt only when element is new)
+  const waitInFront = front.agents.filter(a => a.status === 'waiting').length;
+  const runInFront  = front.agents.filter(a => a.status === 'running').length;
+  el.className = buildFrontClass(front, waitInFront);
+
+  el.innerHTML = `
+    <div class="front-head">
+      <div class="fh-row">
+        <span class="drag-handle" draggable="false">⠿</span>
+        <span class="fname">${escapeHtml(front.name || front.sessionName)}</span>
+        ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
+        <button class="name-btn" data-action="edit">editar</button>
+      </div>
+      <div class="fagents-summary">
+        <div class="fas-dot ${waitInFront ? 'wait' : 'run'}" style="${waitInFront ? '' : 'display:none'}"></div>
+        <div class="fas-dot run" style="${runInFront ? '' : 'display:none'}"></div>
+        <span class="fas-count ${waitInFront ? 'alert' : ''}">${waitInFront} aguardando · ${runInFront} rodando</span>
+      </div>
+    </div>
+    <div class="fdiv"></div>
+    <div class="agents"></div>
+  `;
+
+  attachFrontEvents(el, front);
+  patchAgentRows(el.querySelector('.agents'), front);
+  return el;
+}
+
+function patchFrontEl(el, front) {
+  const waitInFront = front.agents.filter(a => a.status === 'waiting').length;
+  const runInFront  = front.agents.filter(a => a.status === 'running').length;
+  const isSelected  = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane.paneId);
+
+  // Update classes (preserve 'open' — it's managed by click events + openFronts set)
+  const isOpen = el.classList.contains('open');
+  el.className = buildFrontClass(front, waitInFront) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
+
+  // Summary line
+  const fasCount = el.querySelector('.fas-count');
+  if (fasCount) {
+    const newText = `${waitInFront} aguardando · ${runInFront} rodando`;
+    setText(fasCount, newText);
+    cls(fasCount, 'alert', waitInFront > 0);
+  }
+
+  // Name (only when not editing)
+  if (state.inlineEditSession !== front.sessionName) {
+    // If we're switching FROM edit mode back to normal, rebuild the fh-row
+    const hasInput = !!el.querySelector('.fname-input');
+    if (hasInput) {
+      rebuildFhRow(el, front);
+    } else {
+      const fname = el.querySelector('.fname');
+      if (fname) setText(fname, front.name || front.sessionName);
+
+      // aiSuggested badge: add/remove without full rebuild
+      const hasConfirmBtn = !!el.querySelector('[data-action="confirm"]');
+      if (front.aiSuggested && !hasConfirmBtn) rebuildFhRow(el, front);
+      if (!front.aiSuggested && hasConfirmBtn)  rebuildFhRow(el, front);
+    }
+  }
+
+  // Agents
+  patchAgentRows(el.querySelector('.agents'), front);
+}
+
+function buildFrontClass(front, waitInFront) {
+  return `front ${waitInFront > 0 ? 'has-wait' : 'all-run'}`;
+}
+
+function rebuildFhRow(el, front) {
+  const fhRow = el.querySelector('.fh-row');
+  if (!fhRow) return;
+  const displayName = front.name || front.sessionName;
+
+  if (state.inlineEditSession === front.sessionName) {
+    fhRow.innerHTML = `
+      <span class="drag-handle" draggable="false">⠿</span>
+      <div class="fname-edit">
+        <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
+        <button class="name-btn ok" data-action="save">✓ ok</button>
+      </div>
+    `;
+    const inputEl = fhRow.querySelector('.fname-input');
+    const saveBtn = fhRow.querySelector('[data-action="save"]');
+    if (inputEl) {
+      inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
+        if (e.key === 'Enter')  { e.stopPropagation(); saveBtn && saveBtn.click(); }
+      });
+      setTimeout(() => inputEl.focus(), 0);
+    }
+    if (saveBtn) saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const input = el.querySelector('.fname-input');
+      const name = input ? input.value.trim() || front.sessionName : front.sessionName;
+      const f = state.data.fronts.find(x => x.sessionName === front.sessionName);
+      if (f) { f.name = name; f.aiSuggested = false; }
+      window.helm.confirmName(front.sessionName, name);
+      state.inlineEditSession = null;
+      render();
+    });
+  } else {
+    fhRow.innerHTML = `
+      <span class="drag-handle" draggable="false">⠿</span>
+      <span class="fname">${escapeHtml(displayName)}</span>
+      ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
+      <button class="name-btn" data-action="edit">editar</button>
+    `;
+    const editBtn = fhRow.querySelector('[data-action="edit"]');
+    if (editBtn) editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.inlineEditSession = front.sessionName;
+      rebuildFhRow(el, front);
+    });
+    const confirmBtn = fhRow.querySelector('[data-action="confirm"]');
+    if (confirmBtn) confirmBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.helm.confirmName(front.sessionName, front.name || front.sessionName);
+    });
+  }
+}
+
+function attachFrontEvents(el, front) {
+  // Drag-to-reorder
+  let dragSrc = null;
+  el.setAttribute('draggable', 'true');
+  el.addEventListener('dragstart', (e) => {
+    dragSrc = el;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    document.querySelectorAll('.front').forEach(f => f.classList.remove('drag-over'));
+  });
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const src = document.querySelector('.front.dragging');
+    if (src && src !== el) el.classList.add('drag-over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    const src = document.querySelector('.front.dragging');
+    if (!src || src === el) return;
+    const fronts = state.data.fronts;
+    const fromIdx = fronts.findIndex(f => f.sessionName === src.dataset.session);
+    const toIdx   = fronts.findIndex(f => f.sessionName === el.dataset.session);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const [moved] = fronts.splice(fromIdx, 1);
+      fronts.splice(toIdx, 0, moved);
+      state.frontOrder = fronts.map(f => f.sessionName);
+      window.helm.saveFrontOrder(state.frontOrder);
+      patchFronts();
+    }
+  });
+
+  // Toggle open/close on header click
+  el.querySelector('.front-head').addEventListener('click', (e) => {
+    if (e.target.closest('.name-btn') || e.target.closest('.fname-input')) return;
+    el.classList.toggle('open');
+    // Persist open state so re-renders don't collapse it
+    if (el.classList.contains('open')) state.openFronts.add(front.sessionName);
+    else state.openFronts.delete(front.sessionName);
+    resizeToContent();
+  });
+
+  // Name edit / confirm buttons (in the initial build)
+  rebuildFhRow(el, front);
+}
+
+// ── Agent rows reconciler ─────────────────────────────────────────────────
+
+function patchAgentRows(agentsEl, front) {
+  if (!agentsEl) return;
+
+  // Index existing rows by paneId
+  const byPane = new Map();
+  for (const row of agentsEl.querySelectorAll('.agent-row[data-pane]')) {
+    byPane.set(row.dataset.pane, row);
+  }
+
+  // Remove stale
+  for (const [id, row] of byPane) {
+    if (!front.agents.find(a => a.paneId === id)) {
+      row.remove();
+      byPane.delete(id);
+    }
+  }
+
+  // Update or create in order
+  front.agents.forEach((agent, idx) => {
+    let row = byPane.get(agent.paneId);
+    if (!row) {
+      row = buildAgentRow(agent, front);
+      byPane.set(agent.paneId, row);
+    } else {
+      patchAgentRow(row, agent);
+    }
+    const atIdx = agentsEl.children[idx];
+    if (atIdx !== row) agentsEl.insertBefore(row, atIdx || null);
+  });
+}
+
+function buildAgentRow(agent, front) {
+  const row = document.createElement('div');
+  row.className = `agent-row ${agent.status === 'waiting' ? 'is-wait' : ''}`;
+  row.dataset.pane = agent.paneId;
+  row.innerHTML = `
+    <div class="ar-dot ${agent.status === 'waiting' ? 'wait' : 'run'}"></div>
+    <div class="ar-body">
+      <div class="ar-top">
+        <span class="ar-agent ${agentTag(agent.command)}">${escapeHtml(agentTag(agent.command))}</span>
+        <span class="ar-task">${escapeHtml(agent.task || agent.windowName)}</span>
+      </div>
+      <div class="ar-preview ${agent.status === 'waiting' ? 'wait-prev' : ''}">${escapeHtml(agent.lastOutput || '')}</div>
+    </div>
+    <div class="ar-nav">ir →</div>
+  `;
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateTo({ ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId });
+  });
+  return row;
+}
+
+function patchAgentRow(row, agent) {
+  const isWait = agent.status === 'waiting';
+  cls(row, 'is-wait', isWait);
+
+  const dot = row.querySelector('.ar-dot');
+  if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
+
+  const preview = row.querySelector('.ar-preview');
+  if (preview) {
+    cls(preview, 'wait-prev', isWait);
+    const newText = escapeHtml(agent.lastOutput || '');
+    if (preview.innerHTML !== newText) preview.innerHTML = newText;
+  }
 }
