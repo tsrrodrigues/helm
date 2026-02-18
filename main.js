@@ -147,18 +147,26 @@ ipcMain.on('set-ignore-mouse', (_e, ignore) => {
 });
 
 ipcMain.on('navigate-to-pane', async (_e, sessionName, windowName, paneId, weztermTabId) => {
-  console.log('[helm] navigate →', sessionName, windowName, paneId, 'wez:', weztermTabId);
+  console.log('[helm] navigate →', { sessionName, windowName, paneId, weztermTabId });
 
-  if (weztermTabId && weztermBin) {
-    const r = await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
-    if (!r.ok) console.log('[helm] wezterm activate-tab failed:', r.error?.message);
-  }
+  // Step 1: select tmux window + pane first (works even without WezTerm tab id)
   if (sessionName && windowName) {
-    await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
+    const r = await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
+    console.log('[helm] select-window:', r.ok ? 'ok' : r.error?.message);
   }
   if (paneId) {
-    await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+    const r = await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+    console.log('[helm] select-pane:', r.ok ? 'ok' : r.error?.message);
   }
+
+  // Step 2: activate WezTerm tab if we have the id
+  if (weztermTabId && weztermBin) {
+    const r = await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
+    console.log('[helm] activate-tab:', r.ok ? 'ok' : r.error?.message);
+  }
+
+  // Step 3: always bring WezTerm window to front via AppleScript
+  await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
 });
 
 ipcMain.on('confirm-name', (_e, sessionName, name) => {

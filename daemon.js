@@ -165,18 +165,34 @@ async function weztermMap(sessions) {
 
   try {
     const items = JSON.parse(res.stdout || '[]');
+
+    // Log structure once so we can see what fields WezTerm provides
+    if (items.length > 0 && !weztermMap._logged) {
+      weztermMap._logged = true;
+      console.log('[helm] wezterm pane fields:', Object.keys(items[0]).join(', '));
+      console.log('[helm] wezterm sample:', JSON.stringify(items[0]).slice(0, 300));
+    }
+
     const map = {};
     for (const sessionName of sessions) {
       const match = items.find((item) => {
         const blob = JSON.stringify(item).toLowerCase();
         return blob.includes(sessionName.toLowerCase());
       });
-      if (match && (match.tab_id || match.tabId)) {
-        map[sessionName] = match.tab_id || match.tabId;
+      if (match) {
+        // WezTerm may use tab_id or tabId depending on version
+        const tabId = match.tab_id ?? match.tabId ?? match.tab?.id ?? null;
+        if (tabId !== null && tabId !== undefined) {
+          map[sessionName] = tabId;
+          console.log(`[helm] wezterm map: ${sessionName} → tab ${tabId}`);
+        } else {
+          console.log(`[helm] wezterm: found item for ${sessionName} but no tab_id. Keys:`, Object.keys(match).join(', '));
+        }
       }
     }
     return map;
-  } catch {
+  } catch (e) {
+    console.error('[helm] weztermMap parse error:', e.message);
     return {};
   }
 }
