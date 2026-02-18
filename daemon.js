@@ -11,6 +11,7 @@ const WAIT_STABLE_MS = 8000;
 const HOME = os.homedir();
 const HELM_DIR = path.join(HOME, '.helm');
 const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
+const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
 const ANTHROPIC_KEY_FILE = path.join(HOME, '.config', 'anthropic', 'api_key');
 
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
@@ -42,9 +43,26 @@ function writeNames(names) {
   fs.writeFileSync(NAMES_FILE, JSON.stringify(names, null, 2), 'utf8');
 }
 
+function readConfirmed() {
+  try { return JSON.parse(fs.readFileSync(CONFIRMED_FILE, 'utf8') || '{}'); } catch { return {}; }
+}
+
+function writeConfirmed(sessionName) {
+  ensureFiles();
+  const c = readConfirmed();
+  c[sessionName] = true;
+  fs.writeFileSync(CONFIRMED_FILE, JSON.stringify(c, null, 2), 'utf8');
+}
+
+const sysEnv = {
+  ...process.env,
+  PATH: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(':')
+};
+
 function execCmd(cmd, args = [], timeout = 3500) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout }, (error, stdout, stderr) => {
+    execFile(cmd, args, { timeout, env: sysEnv }, (error, stdout, stderr) => {
+      if (error) console.error(`[helm] execCmd ${cmd} ${args.join(' ')}:`, error.message);
       resolve({ ok: !error, error, stdout: stdout || '', stderr: stderr || '' });
     });
   });
@@ -197,6 +215,7 @@ async function buildState() {
 
   const now = Date.now();
   const names = readNames();
+  const confirmed = readConfirmed();
   const sessions = [...new Set(panes.map((p) => p.sessionName))];
   const tabMap = await weztermMap(sessions);
 
@@ -225,7 +244,7 @@ async function buildState() {
         name: names[pane.sessionName] || pane.sessionName,
         sessionName: pane.sessionName,
         weztermTabId: tabMap[pane.sessionName] || null,
-        aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName),
+        aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName && !confirmed[pane.sessionName]),
         agents: []
       });
     }

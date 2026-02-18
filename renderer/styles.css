@@ -49,8 +49,10 @@ body {
 .fname{font-size:13px;font-weight:700;color:#d0d0d0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.01em;}
 .fname-edit{display:flex;gap:6px;align-items:center;flex:1;}
 .fname-input{flex:1;font-size:12px;background:#0a0a12;border:1px solid rgba(255,255,255,.15);color:#ddd;border-radius:6px;padding:3px 8px;}
-.name-btn{font-size:10px;color:#6c63ff;background:none;border:none;cursor:pointer;white-space:nowrap;padding:2px 4px;}
+.name-btn{font-size:10px;color:#6c63ff;background:none;border:none;cursor:pointer;white-space:nowrap;
+  padding:2px 4px;opacity:0;transition:opacity .15s;}
 .name-btn.ok{color:#2ed573;}
+.front-head:hover .name-btn{opacity:1;}
 .fagents-summary{display:flex;gap:5px;align-items:center;margin-top:6px;padding-left:18px;}
 .fas-dot{width:6px;height:6px;border-radius:50%;}
 .fas-dot.run{background:#2ed573;animation:blink 2s infinite;}

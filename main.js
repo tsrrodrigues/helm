@@ -110,6 +110,8 @@ function connectDaemon() {
   daemonSocket.on('error', () => setTimeout(connectDaemon, 2500));
 }
 
+app.setName('Helm');
+
 app.whenReady().then(() => {
   ensureNamesFile();
   createWindow();
@@ -142,6 +144,13 @@ ipcMain.on('set-ignore-mouse', (_event, ignore) => {
 ipcMain.on('confirm-name', (_event, sessionName, name) => {
   if (!sessionName || !name) return;
   saveSessionName(sessionName, String(name).trim());
+  // Mark as confirmed so aiSuggested badge disappears
+  const confirmedFile = path.join(os.homedir(), '.helm', 'confirmed-names.json');
+  try {
+    const c = fs.existsSync(confirmedFile) ? JSON.parse(fs.readFileSync(confirmedFile, 'utf8') || '{}') : {};
+    c[sessionName] = true;
+    fs.writeFileSync(confirmedFile, JSON.stringify(c, null, 2), 'utf8');
+  } catch (e) { console.error('confirm-name write:', e.message); }
 });
 
 ipcMain.handle('get-state', async () => latestState);
