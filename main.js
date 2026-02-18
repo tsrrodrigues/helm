@@ -12,9 +12,22 @@ let latestState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0,
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
 
+// Include Homebrew paths so tmux/wezterm are found regardless of shell env
+const sysEnv = {
+  ...process.env,
+  PATH: [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    process.env.PATH || ''
+  ].join(':')
+};
+
 function runFile(file, args = []) {
   return new Promise((resolve) => {
-    execFile(file, args, { timeout: 4000 }, (error, stdout, stderr) => {
+    execFile(file, args, { timeout: 4000, env: sysEnv }, (error, stdout, stderr) => {
+      if (error) console.error(`runFile ${file}:`, error.message);
       resolve({ error, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
     });
   });
@@ -63,8 +76,13 @@ function createWindow() {
     }
   });
 
-  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setAlwaysOnTop(true, 'pop-up-menu', 1);
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // Re-assert always-on-top whenever any window gets focus (some apps steal it)
+  app.on('browser-window-blur', () => {
+    if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'pop-up-menu', 1);
+  });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
   win.once('ready-to-show', () => {

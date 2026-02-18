@@ -107,6 +107,9 @@ function render() {
   $('shortcut-hint').hidden = !state.shortcutMode;
 
   frontsEl.innerHTML = '';
+  // Drag state
+  let dragSrc = null;
+
   for (const front of state.data.fronts || []) {
     const waitInFront = front.agents.filter((a) => a.status === 'waiting').length;
     const runInFront = front.agents.filter((a) => a.status === 'running').length;
@@ -114,6 +117,38 @@ function render() {
 
     const frontEl = document.createElement('div');
     frontEl.className = `front ${waitInFront ? 'has-wait' : 'all-run'} ${state.open ? 'open' : ''} ${isSelected ? 'shortcut-selected' : ''}`;
+    frontEl.setAttribute('draggable', 'true');
+    frontEl.dataset.session = front.sessionName;
+
+    frontEl.addEventListener('dragstart', (e) => {
+      dragSrc = frontEl;
+      frontEl.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    frontEl.addEventListener('dragend', () => {
+      frontEl.classList.remove('dragging');
+      document.querySelectorAll('.front').forEach(f => f.classList.remove('drag-over'));
+    });
+    frontEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (dragSrc && dragSrc !== frontEl) frontEl.classList.add('drag-over');
+    });
+    frontEl.addEventListener('dragleave', () => frontEl.classList.remove('drag-over'));
+    frontEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      frontEl.classList.remove('drag-over');
+      if (!dragSrc || dragSrc === frontEl) return;
+      // Reorder in state
+      const fronts = state.data.fronts;
+      const fromIdx = fronts.findIndex(f => f.sessionName === dragSrc.dataset.session);
+      const toIdx   = fronts.findIndex(f => f.sessionName === frontEl.dataset.session);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [moved] = fronts.splice(fromIdx, 1);
+        fronts.splice(toIdx, 0, moved);
+        render();
+      }
+      dragSrc = null;
+    });
 
     const showEdit = state.inlineEditSession === front.sessionName;
     const displayName = front.name || front.sessionName;
@@ -121,7 +156,8 @@ function render() {
     frontEl.innerHTML = `
       <div class="front-head">
         <div class="fh-row">
-          ${showEdit ? `
+          <span class="drag-handle" draggable="false">⠿</span>
+        ${showEdit ? `
             <div class="fname-edit">
               <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
               <button class="name-btn ok" data-action="save">✓ ok</button>
