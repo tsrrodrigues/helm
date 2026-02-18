@@ -64,6 +64,7 @@ function createWindow() {
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setIgnoreMouseEvents(true, { forward: true });
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 }
 
@@ -109,6 +110,10 @@ ipcMain.on('navigate-to-pane', async (_event, sessionName, windowName, paneId, w
   if (weztermTabId) await runFile('wezterm', ['cli', 'activate-tab', '--tab-id', String(weztermTabId)]);
   if (sessionName && windowName) await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
   if (paneId) await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+});
+
+ipcMain.on('set-ignore-mouse', (_event, ignore) => {
+  if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
 });
 
 ipcMain.on('confirm-name', (_event, sessionName, name) => {

@@ -14,6 +14,16 @@ const frontsEl = $('fronts');
 pill.addEventListener('click', () => togglePanel());
 pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
 
+// Hover tracking: libera mouse events só quando está sobre a UI, ignora no resto
+document.addEventListener('mousemove', (e) => {
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const overUI = el && (el.closest('.pill') || el.closest('.panel'));
+  window.helm.setIgnoreMouse(!overUI);
+});
+document.addEventListener('mouseleave', () => {
+  window.helm.setIgnoreMouse(true);
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) {
     navigateTo(state.selectedPane);
