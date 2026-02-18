@@ -131,10 +131,27 @@ ipcMain.on('resize-window', (_event, height) => {
   win.setBounds({ x, y: 0, width, height: h }, true);
 });
 
+const WEZTERM_PATHS_MAIN = [
+  '/Applications/WezTerm.app/Contents/MacOS/wezterm',
+  '/opt/homebrew/bin/wezterm',
+  '/usr/local/bin/wezterm'
+];
+const weztermBinMain = WEZTERM_PATHS_MAIN.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || 'wezterm';
+
 ipcMain.on('navigate-to-pane', async (_event, sessionName, windowName, paneId, weztermTabId) => {
-  if (weztermTabId) await runFile('wezterm', ['cli', 'activate-tab', '--tab-id', String(weztermTabId)]);
-  if (sessionName && windowName) await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
-  if (paneId) await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+  console.log('[helm] navigate:', { sessionName, windowName, paneId, weztermTabId });
+  if (weztermTabId) {
+    const r = await runFile(weztermBinMain, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)]);
+    if (r.error) console.log('[helm] wezterm activate-tab failed (non-fatal):', r.error.message);
+  }
+  if (sessionName && windowName) {
+    const r = await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
+    if (r.error) console.log('[helm] tmux select-window:', r.error.message);
+  }
+  if (paneId) {
+    const r = await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+    if (r.error) console.log('[helm] tmux select-pane:', r.error.message);
+  }
 });
 
 ipcMain.on('save-front-order', (_event, order) => {

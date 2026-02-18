@@ -54,15 +54,34 @@ function writeConfirmed(sessionName) {
   fs.writeFileSync(CONFIRMED_FILE, JSON.stringify(c, null, 2), 'utf8');
 }
 
+// WezTerm installs CLI inside the app bundle on macOS
+const WEZTERM_PATHS = [
+  '/Applications/WezTerm.app/Contents/MacOS/wezterm',
+  '/opt/homebrew/bin/wezterm',
+  '/usr/local/bin/wezterm',
+  'wezterm'
+];
+
+let weztermBin = null;
+(function detectWezterm() {
+  for (const p of WEZTERM_PATHS) {
+    try { if (p.startsWith('/') && fs.existsSync(p)) { weztermBin = p; break; } } catch {}
+  }
+  if (!weztermBin) weztermBin = 'wezterm'; // fallback, will fail silently
+})();
+
 const sysEnv = {
   ...process.env,
   PATH: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', process.env.PATH || ''].join(':')
 };
 
 function execCmd(cmd, args = [], timeout = 3500) {
+  // Resolve wezterm to its real path
+  const bin = cmd === 'wezterm' ? weztermBin : cmd;
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout, env: sysEnv }, (error, stdout, stderr) => {
-      if (error) console.error(`[helm] execCmd ${cmd} ${args.join(' ')}:`, error.message);
+    execFile(bin, args, { timeout, env: sysEnv }, (error, stdout, stderr) => {
+      // Only log errors for tmux (wezterm missing is non-fatal, just means no tab switching)
+      if (error && cmd !== 'wezterm') console.error(`[helm] ${cmd} ${args.join(' ')}:`, error.message);
       resolve({ ok: !error, error, stdout: stdout || '', stderr: stderr || '' });
     });
   });
