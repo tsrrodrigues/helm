@@ -55,10 +55,10 @@ function saveSessionName(sessionName, name) {
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - 660) / 2);
+  const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - 740) / 2);
 
   win = new BrowserWindow({
-    width: 660,
+    width: 740,
     height: 52,
     x,
     y: 0,
@@ -122,10 +122,10 @@ app.whenReady().then(() => {
 
 ipcMain.on('resize-window', (_event, height) => {
   if (!win || win.isDestroyed()) return;
-  const width = 660;
+  const width = 740;
   const primaryDisplay = screen.getPrimaryDisplay();
   const x = Math.round(primaryDisplay.workArea.x + (primaryDisplay.workArea.width - width) / 2);
-  const h = Math.max(52, Math.min(600, Number(height) || 52));
+  const h = Math.max(52, Math.min(620, Number(height) || 52));
   win.setBounds({ x, y: 0, width, height: h }, true);
 });
 

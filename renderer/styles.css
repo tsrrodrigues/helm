@@ -23,7 +23,7 @@ body {
 .ptext{font-size:12px;font-weight:600;color:#ffa502;}
 
 /* ── Panel ── */
-.panel{margin-top:8px;width:700px;background:rgba(10,10,20,.97);border:1px solid rgba(255,255,255,.09);
+.panel{margin-top:8px;width:718px;background:rgba(10,10,20,.97);border:1px solid rgba(255,255,255,.09);
   border-radius:16px;backdrop-filter:blur(20px);box-shadow:0 14px 44px rgba(0,0,0,.65);padding:15px 15px 13px;}
 .ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;}
 .ph-title{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#444;}
