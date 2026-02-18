@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tmux HUD v6 – Múltiplos agentes por frente</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a0a12; font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  min-height:100vh; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:18px; padding:24px;
+}
+
+.desktop {
+  width:900px; height:520px; background:#0d0d16;
+  border-radius:14px; position:relative; overflow:hidden;
+  box-shadow:0 40px 100px rgba(0,0,0,.8); flex-shrink:0;
+}
+.menubar {
+  height:26px; background:rgba(0,0,0,.7); display:flex; align-items:center;
+  padding:0 14px; gap:6px; border-bottom:1px solid rgba(255,255,255,.05);
+}
+.md{width:9px;height:9px;border-radius:50%;}
+.md.r{background:#ff5f57}.md.y{background:#ffbd2e}.md.g{background:#28c840}
+.mtime{margin-left:auto;font-size:10px;color:#555;}
+.notch{position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:110px;height:26px;background:#000;border-radius:0 0 14px 14px;z-index:50;
+  display:flex;align-items:center;justify-content:center;}
+.cam{width:6px;height:6px;background:#161616;border-radius:50%;border:1px solid #1e1e1e;}
+
+/* Terminal bg — 3 painéis visíveis */
+.term-bg{position:absolute;inset:26px 0 0 0;display:grid;
+  grid-template-columns:1fr 1fr 1fr; grid-template-rows:1fr 1fr; gap:1px;background:#111;}
+.term{background:#0d0d16;padding:12px 14px;
+  font-family:'SF Mono','Fira Code',monospace;font-size:10px;line-height:1.7;overflow:hidden;}
+.term.span2{grid-column:span 2;}
+.tl{font-size:8px;color:#2a2a3a;font-family:-apple-system,sans-serif;text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:6px;border-bottom:1px solid #161622;padding-bottom:4px;
+  display:flex;align-items:center;gap:5px;}
+.tl span{color:#3a3a5a;font-weight:600;}
+.agent-tag{font-size:7px;font-weight:700;padding:1px 4px;border-radius:3px;
+  text-transform:uppercase;letter-spacing:.04em;}
+.tag-claude{background:rgba(255,165,2,.12);color:#7a5a10;}
+.tag-codex{background:rgba(108,99,255,.12);color:#5a4a8a;}
+.c-d{color:#1e1e2e}.c-o{color:#1a2e22}.c-ok{color:#1a3a20}.c-w{color:#3a2e0a}
+.c-a{color:#5a4a10}.c-g{color:#1a3020}.c-p{color:#2a2a4a}
+.cur{display:inline-block;width:6px;height:11px;background:#2a4a3a;
+  vertical-align:text-bottom;animation:bc 1s step-end infinite;}
+@keyframes bc{0%,100%{opacity:1}50%{opacity:0}}
+
+/* ── HUD ── */
+.hud{position:absolute;top:26px;left:50%;transform:translateX(-50%);z-index:200;
+  display:flex;flex-direction:column;align-items:center;}
+
+.pill{background:rgba(10,10,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px;
+  backdrop-filter:blur(20px);box-shadow:0 4px 20px rgba(0,0,0,.6);cursor:pointer;user-select:none;
+  display:flex;align-items:center;gap:9px;padding:5px 13px 5px 9px;
+  border-color:rgba(255,165,2,.3);box-shadow:0 4px 20px rgba(0,0,0,.6),0 0 0 2px rgba(255,165,2,.07);}
+
+.pdots{display:flex;gap:4px;align-items:center;}
+.pdot{width:7px;height:7px;border-radius:50%;}
+.pdot.run{background:#2ed573;box-shadow:0 0 5px rgba(46,213,115,.6);animation:blink 2s ease-in-out infinite;}
+.pdot.wait{background:#ffa502;box-shadow:0 0 6px rgba(255,165,2,.7);animation:pw 1.3s ease-in-out infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes pw{0%,100%{transform:scale(1)}50%{transform:scale(1.6)}}
+.pdiv{width:1px;height:13px;background:rgba(255,255,255,.09);}
+.ptext{font-size:10px;font-weight:600;color:#ffa502;}
+
+/* Panel */
+.panel{margin-top:7px;width:640px;background:rgba(10,10,20,.97);
+  border:1px solid rgba(255,255,255,.09);border-radius:14px;
+  backdrop-filter:blur(20px);box-shadow:0 14px 44px rgba(0,0,0,.65);padding:13px 13px 11px;}
+
+.ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.ph-title{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#333;}
+
+/* Frentes horizontais */
+.fronts{display:flex;gap:6px;align-items:flex-start;}
+
+.front{flex:1;border-radius:10px;overflow:hidden;cursor:pointer;min-width:0;
+  transition:border-color .2s;}
+.front.has-wait{border:1px solid rgba(255,165,2,.25);}
+.front.all-run{border:1px solid rgba(255,255,255,.07);}
+
+/* Header da frente */
+.front-head{padding:8px 10px 7px;background:rgba(255,255,255,.02);}
+.fh-row{display:flex;align-items:center;gap:6px;}
+.fname{font-size:11px;font-weight:700;color:#c8c8c8;flex:1;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;letter-spacing:-.01em;}
+.fmeta{font-size:8px;color:#333;margin-top:2px;padding-left:0;}
+
+/* Resumo de agentes no header */
+.fagents-summary{display:flex;gap:4px;align-items:center;margin-top:5px;}
+.fas-dot{width:5px;height:5px;border-radius:50%;}
+.fas-dot.run{background:#2ed573;animation:blink 2s infinite;}
+.fas-dot.wait{background:#ffa502;animation:pw 1.3s infinite;}
+.fas-count{font-size:8px;color:#444;}
+.fas-count.alert{color:#7a5010;font-weight:600;}
+
+/* Divisor */
+.fdiv{height:1px;background:rgba(255,255,255,.05);}
+
+/* Lista de agentes — expande ao abrir */
+.agents{display:none;flex-direction:column;}
+.front.open .agents{display:flex;}
+
+.agent-row{
+  display:flex;align-items:flex-start;gap:8px;
+  padding:7px 10px;
+  border-bottom:1px solid rgba(255,255,255,.04);
+  cursor:pointer;
+  transition:background .15s;
+}
+.agent-row:last-child{border-bottom:none;}
+.agent-row:hover{background:rgba(255,255,255,.03);}
+.agent-row.is-wait:hover{background:rgba(255,165,2,.04);}
+.agent-row.is-wait{background:rgba(255,165,2,.02);}
+
+.ar-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:3px;}
+.ar-dot.run{background:#2ed573;animation:blink 2s infinite;}
+.ar-dot.wait{background:#ffa502;animation:pw 1.3s infinite;}
+
+.ar-body{flex:1;min-width:0;}
+.ar-top{display:flex;align-items:center;gap:5px;margin-bottom:2px;}
+.ar-agent{font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;
+  text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;}
+.ar-agent.claude{background:rgba(255,165,2,.12);color:#a07020;}
+.ar-agent.codex{background:rgba(108,99,255,.14);color:#7a70cc;}
+.ar-task{font-size:10px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-weight:500;}
+.ar-preview{font-size:9px;color:#383838;font-family:'SF Mono',monospace;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ar-preview.wait-prev{color:#5a4010;}
+.ar-preview.ok-prev{color:#1a4a20;}
+
+.ar-nav{font-size:9px;color:#2a2a4a;opacity:0;transition:opacity .15s;
+  white-space:nowrap;padding-top:2px;flex-shrink:0;}
+.agent-row:hover .ar-nav{opacity:1;color:#6c63ff;}
+
+/* Footer */
+.pf{display:flex;gap:12px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05);}
+.pfi{font-size:9px;color:#333;}
+.pfi strong{color:#555;}
+.pfi.a strong{color:#ffa502;}
+
+/* Narração */
+.narration{width:900px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:18px;flex-shrink:0;}
+.step-badge{background:rgba(108,99,255,.15);border:1px solid rgba(108,99,255,.3);
+  color:#8c85ff;font-size:10px;font-weight:700;padding:4px 10px;border-radius:6px;
+  white-space:nowrap;letter-spacing:.05em;}
+.step-text{flex:1;font-size:13px;color:#777;line-height:1.5;}
+.step-text strong{color:#ddd;}
+.step-text em{color:#8c85ff;font-style:normal;font-weight:600;}
+.nav-btns{display:flex;gap:8px;flex-shrink:0;}
+.nbtn{padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;
+  border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#777;transition:all .2s;}
+.nbtn:hover{background:rgba(255,255,255,.09);color:#ccc;}
+.nbtn.primary{background:rgba(108,99,255,.2);border-color:rgba(108,99,255,.4);color:#a09aff;}
+.nbtn.primary:hover{background:rgba(108,99,255,.3);color:#c0bbff;}
+.nbtn:disabled{opacity:.3;cursor:not-allowed;}
+.scounter{font-size:10px;color:#2a2a3a;white-space:nowrap;}
+</style>
+</head>
+<body>
+
+<div class="desktop">
+  <div class="menubar">
+    <div class="md r"></div><div class="md y"></div><div class="md g"></div>
+    <div class="mtime">23:54</div>
+  </div>
+  <div class="notch"><div class="cam"></div></div>
+
+  <!-- 5 panes visíveis: 3 em cima, 2 em baixo -->
+  <div class="term-bg">
+    <!-- legal-doc-api: 3 panes em cima -->
+    <div class="term" id="term1">
+      <div class="tl"><span>legal-doc-api</span> <span class="agent-tag tag-claude">claude</span></div>
+      <div id="t1">
+        <div class="c-d">❯ claude "Refactor auth → JWT"</div>
+        <div class="c-w">⚠ Token expiry conflict found</div>
+        <div class="c-a">How to handle? ><div class="cur"></div></div>
+      </div>
+    </div>
+    <div class="term" id="term2">
+      <div class="tl"><span>legal-doc-api</span> <span class="agent-tag tag-codex">codex</span></div>
+      <div id="t2">
+        <div class="c-d">❯ codex "Write payment tests"</div>
+        <div class="c-o">◆ Writing test 18/24...</div>
+        <div class="c-o">◆ Covering edge cases...</div>
+      </div>
+    </div>
+    <div class="term" id="term3">
+      <div class="tl"><span>legal-doc-api</span> <span class="agent-tag tag-claude">claude</span></div>
+      <div id="t3">
+        <div class="c-d">❯ claude "Fix null pointer in parser"</div>
+        <div class="c-o">✻ Reading parser.ts (312 lines)</div>
+        <div class="c-o">✻ Tracing call stack...</div>
+      </div>
+    </div>
+    <!-- facilita-api: 2 panes em baixo -->
+    <div class="term" id="term4">
+      <div class="tl"><span>facilita-api</span> <span class="agent-tag tag-claude">claude</span></div>
+      <div id="t4">
+        <div class="c-d">❯ claude "Migration faturas"</div>
+        <div class="c-ok">✔ Migration written</div>
+        <div class="c-g">Run migration? ><div class="cur"></div></div>
+      </div>
+    </div>
+    <div class="term span2" id="term5">
+      <div class="tl"><span>facilita-api</span> <span class="agent-tag tag-codex">codex</span></div>
+      <div id="t5">
+        <div class="c-d">❯ codex "Add index to faturas table"</div>
+        <div class="c-o">◆ Analyzing query patterns...</div>
+        <div class="c-o">◆ Writing index migration...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div class="hud">
+    <div class="pill" id="pill" onclick="togglePanel()">
+      <div class="pdots">
+        <div class="pdot wait"></div>
+        <div class="pdot wait"></div>
+        <div class="pdot run"></div>
+        <div class="pdot run"></div>
+      </div>
+      <div class="pdiv"></div>
+      <span class="ptext">2 aguardando</span>
+    </div>
+
+    <div class="panel" id="panel" style="display:none;">
+      <div class="ph">
+        <span class="ph-title">frentes ativas</span>
+      </div>
+
+      <div class="fronts" id="fronts">
+
+        <!-- Frente 1: legal-doc-api — 1 aguardando, 2 rodando -->
+        <div class="front has-wait open" id="f1" onclick="toggleFront(event,'f1')">
+          <div class="front-head">
+            <div class="fh-row">
+              <span class="fname">legal-doc-api</span>
+            </div>
+            <div class="fagents-summary">
+              <div class="fas-dot wait"></div>
+              <div class="fas-dot run"></div>
+              <div class="fas-dot run"></div>
+              <span class="fas-count alert">1 aguardando · 2 rodando</span>
+            </div>
+          </div>
+          <div class="fdiv"></div>
+          <div class="agents">
+
+            <!-- Agente 1: aguardando -->
+            <div class="agent-row is-wait" onclick="navigate(event,'legal-doc-api · pane 1')">
+              <div class="ar-dot wait"></div>
+              <div class="ar-body">
+                <div class="ar-top">
+                  <span class="ar-agent claude">claude</span>
+                  <span class="ar-task">Refactor auth → JWT</span>
+                </div>
+                <div class="ar-preview wait-prev">⚠ Token expiry conflict — how to handle?</div>
+              </div>
+              <div class="ar-nav">ir →</div>
+            </div>
+
+            <!-- Agente 2: rodando -->
+            <div class="agent-row" onclick="navigate(event,'legal-doc-api · pane 2')">
+              <div class="ar-dot run"></div>
+              <div class="ar-body">
+                <div class="ar-top">
+                  <span class="ar-agent codex">codex</span>
+                  <span class="ar-task">Testes payment service</span>
+                </div>
+                <div class="ar-preview">◆ Writing test 18/24...</div>
+              </div>
+              <div class="ar-nav">ir →</div>
+            </div>
+
+            <!-- Agente 3: rodando -->
+            <div class="agent-row" onclick="navigate(event,'legal-doc-api · pane 3')">
+              <div class="ar-dot run"></div>
+              <div class="ar-body">
+                <div class="ar-top">
+                  <span class="ar-agent claude">claude</span>
+                  <span class="ar-task">Fix null pointer no parser</span>
+                </div>
+                <div class="ar-preview">✻ Tracing call stack em parser.ts...</div>
+              </div>
+              <div class="ar-nav">ir →</div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Frente 2: facilita-api — 1 aguardando, 1 rodando -->
+        <div class="front has-wait open" id="f2" onclick="toggleFront(event,'f2')">
+          <div class="front-head">
+            <div class="fh-row">
+              <span class="fname">facilita-api</span>
+            </div>
+            <div class="fagents-summary">
+              <div class="fas-dot wait"></div>
+              <div class="fas-dot run"></div>
+              <span class="fas-count alert">1 aguardando · 1 rodando</span>
+            </div>
+          </div>
+          <div class="fdiv"></div>
+          <div class="agents">
+
+            <!-- Agente 1: aguardando -->
+            <div class="agent-row is-wait" onclick="navigate(event,'facilita-api · pane 1')">
+              <div class="ar-dot wait"></div>
+              <div class="ar-body">
+                <div class="ar-top">
+                  <span class="ar-agent claude">claude</span>
+                  <span class="ar-task">Migration faturas</span>
+                </div>
+                <div class="ar-preview wait-prev">✔ Migration pronta — rodar agora?</div>
+              </div>
+              <div class="ar-nav">ir →</div>
+            </div>
+
+            <!-- Agente 2: rodando -->
+            <div class="agent-row" onclick="navigate(event,'facilita-api · pane 2')">
+              <div class="ar-dot run"></div>
+              <div class="ar-body">
+                <div class="ar-top">
+                  <span class="ar-agent codex">codex</span>
+                  <span class="ar-task">Index na tabela faturas</span>
+                </div>
+                <div class="ar-preview">◆ Analyzing query patterns...</div>
+              </div>
+              <div class="ar-nav">ir →</div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <div class="pf">
+        <div class="pfi"><strong>2</strong> frentes</div>
+        <div class="pfi"><strong>5</strong> agentes</div>
+        <div class="pfi a"><strong>2</strong> aguardando você</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flash de navegação -->
+  <div id="nav-flash" style="display:none;position:absolute;inset:26px 0 0 0;
+    background:rgba(108,99,255,.06);z-index:300;display:none;
+    align-items:center;justify-content:center;">
+    <div id="nav-label" style="font-size:13px;font-weight:700;color:rgba(108,99,255,.9);
+      background:rgba(10,10,20,.9);padding:8px 18px;border-radius:8px;
+      border:1px solid rgba(108,99,255,.3);"></div>
+  </div>
+</div>
+
+<!-- Narração -->
+<div class="narration">
+  <div class="step-badge" id="sbadge">ESTADO ATUAL</div>
+  <div class="step-text" id="stext">
+    <strong>2 frentes, 5 agentes no total.</strong> Cada frente tem múltiplos Claude Code e Codex rodando em paralelo.
+    A pill mostra <em>2 aguardando</em> — um em cada frente. Clique na pill para ver o painel.
+  </div>
+  <div class="nav-btns">
+    <button class="nbtn" id="bprev" onclick="prev()" disabled>← anterior</button>
+    <button class="nbtn primary" id="bnext" onclick="next()">próximo →</button>
+  </div>
+  <span class="scounter" id="scounter">1 / 4</span>
+</div>
+
+<script>
+const steps = [
+  {
+    badge: 'ESTADO ATUAL',
+    text: '<strong>2 frentes, 5 agentes no total.</strong> Cada frente tem múltiplos Claude Code e Codex rodando em paralelo. A pill mostra <em>2 aguardando</em> — um em cada frente. Clique na pill para ver o painel.',
+    panelOpen: false
+  },
+  {
+    badge: 'PASSO 1',
+    text: 'Você abre o painel. As frentes ficam em colunas. Cada frente mostra um <strong>resumo rápido</strong> dos seus agentes: "1 aguardando · 2 rodando". Você já sabe onde focar sem abrir nada.',
+    panelOpen: true, f1open: false, f2open: false
+  },
+  {
+    badge: 'PASSO 2',
+    text: 'Você expande <em>legal-doc-api</em> — vê os <strong>3 agentes individualmente</strong>: claude aguardando com o erro, codex escrevendo testes, claude rastreando bug. Cada um com tag de qual agente é e o último output.',
+    panelOpen: true, f1open: true, f2open: false
+  },
+  {
+    badge: 'PASSO 3',
+    text: 'Você clica em <em>"Refactor auth → JWT"</em> — o que está aguardando. O terminal vai direto pra esse pane específico. <strong>Não importa quantos agentes têm na frente</strong> — você vai pro certo.',
+    panelOpen: true, f1open: true, f2open: false, navTo: 'legal-doc-api · claude · pane 1'
+  },
+];
+
+let cur = 0;
+
+function render() {
+  const s = steps[cur];
+  document.getElementById('sbadge').textContent = s.badge;
+  document.getElementById('stext').innerHTML = s.text;
+  document.getElementById('scounter').textContent = `${cur+1} / ${steps.length}`;
+  document.getElementById('bprev').disabled = cur === 0;
+  document.getElementById('bnext').disabled = cur === steps.length - 1;
+  document.getElementById('bnext').textContent = cur === steps.length - 1 ? '✓ fim' : 'próximo →';
+
+  const panel = document.getElementById('panel');
+  panel.style.display = s.panelOpen ? 'block' : 'none';
+
+  if (s.panelOpen !== undefined) {
+    const f1 = document.getElementById('f1');
+    const f2 = document.getElementById('f2');
+    if (s.f1open !== undefined) { f1.classList.toggle('open', s.f1open); }
+    if (s.f2open !== undefined) { f2.classList.toggle('open', s.f2open); }
+  }
+
+  if (s.navTo) {
+    setTimeout(() => {
+      const nf = document.getElementById('nav-flash');
+      document.getElementById('nav-label').textContent = '→ ' + s.navTo;
+      nf.style.display = 'flex';
+      setTimeout(() => { nf.style.display = 'none'; }, 800);
+    }, 300);
+  }
+}
+
+function togglePanel() {
+  const p = document.getElementById('panel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleFront(e, id) {
+  e.stopPropagation();
+  document.getElementById(id).classList.toggle('open');
+}
+
+function navigate(e, label) {
+  e.stopPropagation();
+  const nf = document.getElementById('nav-flash');
+  document.getElementById('nav-label').textContent = '→ ' + label;
+  nf.style.display = 'flex';
+  setTimeout(() => { nf.style.display = 'none'; }, 700);
+}
+
+function next() { if (cur < steps.length-1) { cur++; render(); } }
+function prev() { if (cur > 0) { cur--; render(); } }
+
+render();
+</script>
+</body>
+</html>

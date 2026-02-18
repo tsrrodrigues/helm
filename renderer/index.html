@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Helm HUD</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="hud">
+    <div class="pill" id="pill" role="button" tabindex="0">
+      <div class="pdots" id="pill-dots"></div>
+      <div class="pdiv"></div>
+      <span class="ptext" id="pill-text">0 aguardando</span>
+    </div>
+
+    <div class="panel" id="panel" hidden>
+      <div class="ph">
+        <span class="ph-title">frentes ativas</span>
+        <span class="hint" id="shortcut-hint" hidden>Pressione Enter ou clique para navegar</span>
+      </div>
+      <div class="fronts" id="fronts"></div>
+      <div class="pf">
+        <div class="pfi"><strong id="sum-fronts">0</strong> frentes</div>
+        <div class="pfi"><strong id="sum-agents">0</strong> agentes</div>
+        <div class="pfi a"><strong id="sum-waiting">0</strong> aguardando você</div>
+      </div>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
