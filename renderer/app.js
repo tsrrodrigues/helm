@@ -140,6 +140,7 @@ function navigateTo(agent) {
   window.helm.navigateToPane(agent.sessionName, agent.windowName, agent.paneId, agent.weztermTabId);
   state.shortcutMode = false;
   $('shortcut-hint').hidden = true;
+  render();
 }
 
 function agentTag(command) {
