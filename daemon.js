@@ -403,7 +403,13 @@ const CLAUDE_BIN = '/Users/tiagorodrigues/.local/bin/claude';
 function cleanTaskName(raw, fallback) {
   const text = String(raw || '').replace(/[\r\n]+/g, ' ').trim();
   if (!text) return fallback;
-  return text.replace(/^['"`]|['"`]$/g, '').slice(0, 40).toLowerCase();
+  let name = text.replace(/^['"`]|['"`]$/g, '').toLowerCase();
+  // Reject dissertations: too many words means the model didn't follow format
+  const words = name.split(/\s+/);
+  if (words.length > 5) return fallback;
+  // Reject responses that start with conversational/explanatory patterns
+  if (/^(i |i'm |the |this |that |it |looking |based |here |there |from |seems? )/.test(name)) return fallback;
+  return name.slice(0, 40);
 }
 
 function askClaude(prompt) {
@@ -703,7 +709,7 @@ ${startOutput.slice(0, 2000)}
 Recent output:
 ${output.slice(-1500)}
 
-Reply with ONLY a 2-4 word lowercase task name describing the major front of work.`;
+Reply with ONLY a 2-4 word lowercase task name describing the major front of work. No sentences, no explanations, no articles. Just the name.`;
 
         const raw = await askClaude(prompt);
         const name = cleanTaskName(raw, null);
