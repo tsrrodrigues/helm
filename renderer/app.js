@@ -1,12 +1,15 @@
 const state = {
-  data: { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } },
+  data: { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } },
   open: false,
   selectedPane: null,
   inlineEditSession: null,
   shortcutMode: false,
   frontOrder: [],
   openFronts: new Set(),
-  dismissedPanes: new Set()
+  dismissedPanes: new Set(),
+  layout: null,  // set on startup from main process (window is always expanded)
+  creatingSession: false,
+  confirmingDelete: null  // { paneId, sessionName, type: 'window'|'session' }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -17,42 +20,170 @@ const frontsEl = $('fronts');
 // ── Mouse passthrough ─────────────────────────────────────────────────────
 // sendSync ensures cursor switches in same frame (no async lag).
 // State tracking avoids spamming IPC on every mousemove.
-let _ignoring = true;
+let _ignoring = true; // starts true — window is always expanded, passthrough on transparent areas
 function setIgnoreIfChanged(ignore) {
   if (ignore === _ignoring) return;
   _ignoring = ignore;
   window.helm.setIgnoreMouse(ignore);
 }
 document.addEventListener('mousemove', (e) => {
+  if (_pillDrag) return; // during drag, keep mouse events active
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const overUI = !!el && el !== document.documentElement && el !== document.body;
   setIgnoreIfChanged(!overUI);
 });
-document.addEventListener('mouseleave', () => setIgnoreIfChanged(true));
+document.addEventListener('mouseleave', () => {
+  if (!_pillDrag) setIgnoreIfChanged(true);
+});
+
+// ── Badge drag ───────────────────────────────────────────────────────────
+const DRAG_THRESHOLD = 5;
+let _pillDrag = null;
+
+pill.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  setIgnoreIfChanged(false);
+
+  if (state.open) {
+    // When expanded, click closes — no drag support
+    _pillDrag = { startScreenX: e.screenX, startScreenY: e.screenY, isDragging: false, expandedClick: true };
+    return;
+  }
+
+  _pillDrag = {
+    startScreenX: e.screenX,
+    startScreenY: e.screenY,
+    isDragging: false,
+    expandedClick: false
+  };
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!_pillDrag || _pillDrag.expandedClick) return;
+  const dx = e.screenX - _pillDrag.startScreenX;
+  const dy = e.screenY - _pillDrag.startScreenY;
+
+  if (!_pillDrag.isDragging) {
+    if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+    _pillDrag.isDragging = true;
+    _pillDrag.lastScreenX = _pillDrag.startScreenX;
+    _pillDrag.lastScreenY = _pillDrag.startScreenY;
+  }
+
+  const moveDx = e.screenX - _pillDrag.lastScreenX;
+  const moveDy = e.screenY - _pillDrag.lastScreenY;
+  _pillDrag.lastScreenX = e.screenX;
+  _pillDrag.lastScreenY = e.screenY;
+
+  window.helm.moveWindow(moveDx, moveDy);
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (!_pillDrag) return;
+  const wasDragging = _pillDrag.isDragging;
+  _pillDrag = null;
+
+  if (wasDragging) {
+    // Recalculate window bounds for new pill position, then save
+    const layout = window.helm.recalculateBounds();
+    if (layout) { state.layout = layout; applyLayout(); }
+    window.helm.savePillPosition(null, null);
+  } else {
+    // Was a click, not a drag
+    togglePanel();
+  }
+  // Always restore focus to previous app after interacting with Helm
+  window.helm.refocusPreviousApp();
+});
 
 // ── Events ────────────────────────────────────────────────────────────────
 
-pill.addEventListener('click', () => togglePanel());
 pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) navigateTo(state.selectedPane);
-  if (e.key === 'Escape' && state.open) togglePanel(false);
+  // Skip keyboard nav when editing inline name
+  if (state.inlineEditSession) return;
+
+  // Handle create session input
+  if (state.creatingSession) {
+    if (e.key === 'Escape') { e.preventDefault(); cancelCreateSession(); }
+    return; // let input handle Enter etc.
+  }
+
+  // Handle delete confirmation
+  if (state.confirmingDelete) {
+    if (e.key === 'y' || e.key === 'Enter') { e.preventDefault(); executeDelete(); }
+    else if (e.key === 'Escape' || e.key === 'n') { e.preventDefault(); cancelDelete(); }
+    return;
+  }
+
+  // Cmd+number: navigate to Nth agent row
+  if (e.metaKey && e.key >= '1' && e.key <= '9' && state.open) {
+    e.preventDefault();
+    const agents = getNavigableAgents();
+    const idx = parseInt(e.key, 10) - 1;
+    if (idx < agents.length) {
+      navigateTo(agents[idx]);
+      togglePanel(false);
+      window.helm.blurWindow();
+    }
+    return;
+  }
+
+  if ((e.key === 'j' || e.key === 'ArrowDown') && state.shortcutMode && state.open) {
+    e.preventDefault();
+    navigateSelection(1);
+  } else if ((e.key === 'k' || e.key === 'ArrowUp') && state.shortcutMode && state.open) {
+    e.preventDefault();
+    navigateSelection(-1);
+  } else if (e.key === 'Enter' && state.shortcutMode && state.selectedPane) {
+    e.preventDefault();
+    const agent = state.selectedPane;
+    navigateTo(agent);
+    togglePanel(false);
+    window.helm.blurWindow();
+  } else if (e.key === 'x' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    dismissSelected();
+  } else if (e.key === 'd' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    initiateDeleteWindow();
+  } else if (e.key === 'D' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    initiateDeleteSession();
+  } else if (e.key === 'n' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    createWindowForSelected();
+  } else if (e.key === 'N' && state.shortcutMode && state.open) {
+    e.preventDefault();
+    startCreateSession();
+  } else if (e.key === 'Escape' && state.open) {
+    e.preventDefault();
+    togglePanel(false);
+    if (state.shortcutMode) window.helm.blurWindow();
+  }
 });
 
 window.helm.onActiveApp(({ isTerminal }) => {
   if (!isTerminal && state.open) togglePanel(false);
 });
 
+$('add-session-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  startCreateSession();
+});
+
 window.helm.onShortcutFired(() => {
-  state.shortcutMode = true;
-  if (!state.open) togglePanel(true);
-  const oldest = state.data?.summary?.oldestWaiting;
-  if (!oldest) return;
-  for (const f of state.data.fronts) {
-    const ag = f.agents.find(a => a.paneId === oldest.paneId);
-    if (ag) { state.selectedPane = { ...ag, sessionName: f.sessionName, weztermTabId: f.weztermTabId }; break; }
+  if (state.open) {
+    // Toggle: close + blur
+    togglePanel(false);
+    window.helm.blurWindow();
+    return;
   }
+  state.shortcutMode = true;
+  togglePanel(true);
+  preselectAgent();
   render();
 });
 
@@ -77,19 +208,33 @@ window.helm.onStateUpdate((next) => {
     if (!nowWaiting.has(paneId)) state.dismissedPanes.delete(paneId);
   }
 
-  // Auto-open panel when an agent transitions to "waiting" (ignore dismissed)
-  let newWaiting = false;
+  // Detect newly waiting panes (not previously waiting) for bounce nudge
+  let hasNewWaiting = false;
   for (const paneId of nowWaiting) {
-    if (!prevWaiting.has(paneId) && !state.dismissedPanes.has(paneId)) newWaiting = true;
-  }
-  if (newWaiting) {
-    for (const f of (next.fronts || [])) state.openFronts.add(f.sessionName);
-    if (!state.open) togglePanel(true);
+    if (!prevWaiting.has(paneId) && !state.dismissedPanes.has(paneId)) { hasNewWaiting = true; break; }
   }
 
   state.data = next;
   if (!state.inlineEditSession) render();
+
+  // Trigger bounce on pill when a new agent starts waiting
+  if (hasNewWaiting) {
+    pill.classList.remove('pill-nudge');
+    // Force reflow to restart animation
+    void pill.offsetWidth;
+    pill.classList.add('pill-nudge');
+    pill.addEventListener('animationend', function onEnd(e) {
+      if (e.animationName === 'pill-bounce') {
+        pill.classList.remove('pill-nudge');
+        pill.removeEventListener('animationend', onEnd);
+      }
+    });
+  }
 });
+
+// Get layout from main process (window is always at expanded size)
+state.layout = window.helm.getLayout();
+applyLayout();
 
 // Load initial state + persisted front order
 window.helm.getState().then((initial) => {
@@ -120,26 +265,69 @@ function applyFrontOrder(data) {
   }
 }
 
+function applyLayout() {
+  const l = state.layout;
+  if (!l) return;
+  pill.style.left = l.pillOffsetX + 'px';
+  pill.style.top = l.pillOffsetY + 'px';
+  panel.style.left = l.panelOffsetX + 'px';
+  panel.style.top = l.panelOffsetY + 'px';
+  panel.style.width = l.panelW + 'px';
+}
+
+let _animating = false;
+
 function togglePanel(force) {
-  state.open = typeof force === 'boolean' ? force : !state.open;
-  panel.hidden = !state.open;
-  render();
-  resizeToContent();
+  const wantOpen = typeof force === 'boolean' ? force : !state.open;
+  if (wantOpen === state.open || _animating) return;
+
+  if (wantOpen) {
+    // ── OPEN — pure CSS, no window resize ──
+    state.open = true;
+    panel.classList.remove('closing', 'visible');
+    for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
+    render();
+
+    // Fade in panel on next frame
+    requestAnimationFrame(() => {
+      panel.classList.add('visible');
+    });
+  } else {
+    // ── CLOSE — pure CSS, no window resize ──
+    _animating = true;
+    panel.classList.remove('visible');
+    panel.classList.add('closing');
+
+    const finishClose = () => {
+      if (!_animating) return;
+      panel.classList.remove('closing');
+      _animating = false;
+      state.open = false;
+      state.shortcutMode = false;
+      state.selectedPane = null;
+      state.creatingSession = false;
+      state.confirmingDelete = null;
+      render();
+    };
+
+    panel.addEventListener('transitionend', function onEnd(e) {
+      if (e.target !== panel) return;
+      panel.removeEventListener('transitionend', onEnd);
+      finishClose();
+    }, { once: true });
+
+    // Safety fallback
+    setTimeout(() => { if (_animating) finishClose(); }, 200);
+  }
 }
 
 function resizeToContent() {
-  if (!state.open) { window.helm.resizeWindow(52); return; }
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const h = Math.min(560, (panel.scrollHeight || 200) + 60);
-    window.helm.resizeWindow(h);
-  }));
+  // No-op: window is always at expanded size, panel scrolls internally
 }
 
 function navigateTo(agent) {
   state.dismissedPanes.add(agent.paneId);
   window.helm.navigateToPane(agent.sessionName, agent.windowName, agent.paneId, agent.weztermTabId);
-  state.shortcutMode = false;
-  $('shortcut-hint').hidden = true;
   render();
 }
 
@@ -166,6 +354,181 @@ function escapeHtml(text) {
   return String(text || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
+// ── Keyboard navigation helpers ───────────────────────────────────────
+
+function getNavigableAgents() {
+  const list = [];
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      list.push({ ...a, sessionName: f.sessionName, weztermTabId: f.weztermTabId });
+    }
+  }
+  return list;
+}
+
+function preselectAgent() {
+  const agents = getNavigableAgents();
+  if (!agents.length) { state.selectedPane = null; return; }
+
+  // Prefer oldest waiting agent (not dismissed)
+  const oldest = state.data?.summary?.oldestWaiting;
+  if (oldest) {
+    const match = agents.find(a => a.paneId === oldest.paneId && !state.dismissedPanes.has(a.paneId));
+    if (match) { state.selectedPane = match; ensureSelectedVisible(); return; }
+  }
+
+  // Fallback: first waiting not dismissed
+  const firstWaiting = agents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
+  if (firstWaiting) { state.selectedPane = firstWaiting; ensureSelectedVisible(); return; }
+
+  // Fallback: active pane (currently focused in tmux)
+  const activePaneId = state.data?.activePane;
+  if (activePaneId) {
+    const active = agents.find(a => a.paneId === activePaneId);
+    if (active) { state.selectedPane = active; ensureSelectedVisible(); return; }
+  }
+
+  // Fallback: first agent
+  state.selectedPane = agents[0];
+  ensureSelectedVisible();
+}
+
+function navigateSelection(dir) {
+  const agents = getNavigableAgents();
+  if (!agents.length) return;
+
+  if (!state.selectedPane) {
+    state.selectedPane = agents[0];
+  } else {
+    const idx = agents.findIndex(a => a.paneId === state.selectedPane.paneId);
+    const next = (idx + dir + agents.length) % agents.length;
+    state.selectedPane = agents[next];
+  }
+
+  ensureSelectedVisible();
+  render();
+}
+
+function ensureSelectedVisible() {
+  if (!state.selectedPane) return;
+  // Auto-expand the front containing the selected agent
+  for (const f of (state.data.fronts || [])) {
+    if (f.agents.some(a => a.paneId === state.selectedPane.paneId)) {
+      state.openFronts.add(f.sessionName);
+      break;
+    }
+  }
+  // Scroll into view after render
+  requestAnimationFrame(() => {
+    const row = document.querySelector(`.agent-row[data-pane="${state.selectedPane?.paneId}"]`);
+    if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function dismissSelected() {
+  if (!state.selectedPane) return;
+  const agents = getNavigableAgents();
+  const idx = agents.findIndex(a => a.paneId === state.selectedPane.paneId);
+
+  state.dismissedPanes.add(state.selectedPane.paneId);
+
+  // Advance selection to next agent (or previous, or null)
+  if (agents.length > 1) {
+    const next = idx + 1 < agents.length ? idx + 1 : idx - 1;
+    state.selectedPane = agents[next];
+  } else {
+    state.selectedPane = null;
+  }
+  render();
+}
+
+// ── Create session ────────────────────────────────────────────────────────
+
+function startCreateSession() {
+  state.creatingSession = true;
+  render();
+  setTimeout(() => {
+    const input = document.querySelector('.create-session-input');
+    if (input) input.focus();
+  }, 0);
+}
+
+function cancelCreateSession() {
+  state.creatingSession = false;
+  render();
+}
+
+async function submitCreateSession() {
+  const input = document.querySelector('.create-session-input');
+  if (!input) return;
+  const name = input.value.trim();
+  if (!name) return;
+  state.creatingSession = false;
+  render();
+  const result = await window.helm.createSession(name);
+  if (!result.ok) console.error('[helm] create-session failed:', result.error);
+}
+
+// ── Delete session/window ────────────────────────────────────────────────
+
+function initiateDeleteWindow() {
+  if (!state.selectedPane) return;
+  const agent = state.selectedPane;
+  const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === agent.paneId));
+  if (!front) return;
+  state.confirmingDelete = { paneId: agent.paneId, sessionName: front.sessionName, type: 'window' };
+  render();
+}
+
+function initiateDeleteSession() {
+  if (!state.selectedPane) return;
+  const agent = state.selectedPane;
+  const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === agent.paneId));
+  if (!front) return;
+  state.confirmingDelete = { paneId: agent.paneId, sessionName: front.sessionName, type: 'session' };
+  render();
+}
+
+async function createWindowForSelected() {
+  if (!state.selectedPane) return;
+  const agent = state.selectedPane;
+  const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === agent.paneId));
+  if (!front) return;
+  const result = await window.helm.createWindow(front.sessionName);
+  if (!result.ok) console.error('[helm] create-window failed:', result.error);
+}
+
+async function executeDelete() {
+  if (!state.confirmingDelete) return;
+  const { paneId, sessionName, type } = state.confirmingDelete;
+  state.confirmingDelete = null;
+
+  // Advance selection away from deleted item
+  const agents = getNavigableAgents();
+  const idx = agents.findIndex(a => a.paneId === paneId);
+  if (agents.length > 1) {
+    const next = idx + 1 < agents.length ? idx + 1 : idx - 1;
+    state.selectedPane = agents[next];
+  } else {
+    state.selectedPane = null;
+  }
+
+  render();
+
+  let result;
+  if (type === 'session') {
+    result = await window.helm.killSession(sessionName);
+  } else {
+    result = await window.helm.killWindow(paneId);
+  }
+  if (!result.ok) console.error(`[helm] kill-${type} failed:`, result.error);
+}
+
+function cancelDelete() {
+  state.confirmingDelete = null;
+  render();
+}
+
 // ── Main render ───────────────────────────────────────────────────────────
 
 function render() {
@@ -178,7 +541,10 @@ function render() {
   }
 
   setText($('pill-text'), effectiveWaiting > 0 ? `${effectiveWaiting} aguardando` : 'tudo rodando');
-  pill.className = effectiveWaiting > 0 ? 'pill' : 'pill all-ok';
+
+  const wasNudge = pill.classList.contains('pill-nudge');
+  pill.className = effectiveWaiting > 0 ? 'pill has-waiting' : 'pill all-ok';
+  if (wasNudge && effectiveWaiting > 0) pill.classList.add('pill-nudge');
 
   // Pill dots
   const dots = [];
@@ -191,9 +557,45 @@ function render() {
   setText($('sum-fronts'), String(state.data.summary?.total || 0));
   setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
   setText($('sum-waiting'), String(effectiveWaiting));
-  $('shortcut-hint').hidden = !state.shortcutMode;
+
+  const hint = $('shortcut-hint');
+  hint.hidden = !state.shortcutMode;
+  if (state.shortcutMode) {
+    if (state.confirmingDelete) {
+      setText(hint, 'Enter/y confirmar · Esc/n cancelar');
+    } else {
+      setText(hint, 'j/k navegar · Enter ir · x dispensar · n window · d/D deletar · N sessão');
+    }
+  }
 
   reconcileFronts();
+  renderCreateArea();
+}
+
+// ── Create area renderer ──────────────────────────────────────────────────
+
+function renderCreateArea() {
+  const area = $('create-area');
+  if (!area) return;
+  if (!state.creatingSession) {
+    area.innerHTML = '';
+    return;
+  }
+  if (area.querySelector('.create-session-input')) return; // already rendered
+  area.innerHTML = `
+    <div class="create-session-row">
+      <input class="create-session-input" placeholder="nome da sessão" maxlength="64" />
+      <button class="create-btn">criar</button>
+    </div>
+  `;
+  const input = area.querySelector('.create-session-input');
+  const btn = area.querySelector('.create-btn');
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitCreateSession(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelCreateSession(); }
+  });
+  btn.addEventListener('click', () => submitCreateSession());
+  setTimeout(() => input.focus(), 0);
 }
 
 // ── Fronts reconciler ─────────────────────────────────────────────────────
@@ -262,9 +664,8 @@ function patchFrontEl(el, front) {
   const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
   const isOpen = state.openFronts.has(front.sessionName);
-  const isSelected = state.selectedPane && front.agents.some(a => a.paneId === state.selectedPane?.paneId);
 
-  el.className = frontClasses(effectiveWait) + (isOpen ? ' open' : '') + (isSelected ? ' shortcut-selected' : '');
+  el.className = frontClasses(effectiveWait) + (isOpen ? ' open' : '');
 
   // Summary
   const fasCount = el.querySelector('.fas-count');
@@ -489,16 +890,43 @@ function reconcileAgentRows(agentsEl, front) {
     }
     if (agentsEl.children[idx] !== row) agentsEl.insertBefore(row, agentsEl.children[idx] || null);
   });
+
+  // Add window button at the end
+  let addBtn = agentsEl.querySelector('.add-window-btn');
+  if (!addBtn) {
+    addBtn = document.createElement('button');
+    addBtn.className = 'add-window-btn';
+    addBtn.textContent = '+ nova window';
+    addBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const result = await window.helm.createWindow(front.sessionName);
+      if (!result.ok) console.error('[helm] create-window failed:', result.error);
+    });
+    agentsEl.appendChild(addBtn);
+  }
+  // Keep it last
+  if (addBtn !== agentsEl.lastElementChild) agentsEl.appendChild(addBtn);
+}
+
+function getAgentGlobalIndex(paneId) {
+  const agents = getNavigableAgents();
+  const idx = agents.findIndex(a => a.paneId === paneId);
+  return idx >= 0 && idx < 9 ? idx + 1 : null;
 }
 
 function createAgentRow(agent, front) {
   const row = document.createElement('div');
   const isWait = agent.status === 'waiting';
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
-  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}`;
+  const isSelected = state.selectedPane?.paneId === agent.paneId;
+  const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
+  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}${isSelected ? ' selected' : ''}${isConfirming ? ' confirming-delete' : ''}`;
   row.dataset.pane = agent.paneId;
   const tag = agentTag(agent.command);
+  const num = getAgentGlobalIndex(agent.paneId);
+  const confirmType = state.confirmingDelete?.type === 'session' ? 'sessão' : 'window';
   row.innerHTML = `
+    ${num ? `<span class="ar-num">${num}</span>` : ''}
     <div class="ar-dot ${isWait ? 'wait' : 'run'}"></div>
     <div class="ar-body">
       <div class="ar-top">
@@ -508,6 +936,8 @@ function createAgentRow(agent, front) {
       <div class="ar-name">${escapeHtml(agent.task || agent.windowName)}</div>
     </div>
     <div class="ar-dismiss" data-pane="${agent.paneId}" title="marcar como visto">✓</div>
+    <div class="ar-delete" data-pane="${agent.paneId}" title="deletar">✕</div>
+    <div class="ar-confirm-delete">deletar ${confirmType}? <button class="confirm-yes">sim</button> <button class="confirm-no">não</button></div>
     <div class="ar-nav">ir →</div>
   `;
   row.querySelector('.ar-dismiss').addEventListener('click', (e) => {
@@ -515,8 +945,23 @@ function createAgentRow(agent, front) {
     state.dismissedPanes.add(agent.paneId);
     render();
   });
+  row.querySelector('.ar-delete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Select this agent first, then initiate delete window
+    state.selectedPane = { ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId };
+    initiateDeleteWindow();
+  });
+  row.querySelector('.confirm-yes').addEventListener('click', (e) => {
+    e.stopPropagation();
+    executeDelete();
+  });
+  row.querySelector('.confirm-no').addEventListener('click', (e) => {
+    e.stopPropagation();
+    cancelDelete();
+  });
   row.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (state.confirmingDelete) return;
     navigateTo({ ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId });
   });
   return row;
@@ -525,8 +970,12 @@ function createAgentRow(agent, front) {
 function patchAgentRow(row, agent, front) {
   const isWait = agent.status === 'waiting';
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
+  const isSelected = state.selectedPane?.paneId === agent.paneId;
+  const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
   cls(row, 'is-wait', isWait);
   cls(row, 'is-dismissed', isDismissed);
+  cls(row, 'selected', isSelected);
+  cls(row, 'confirming-delete', isConfirming);
 
   const dot = row.querySelector('.ar-dot');
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
@@ -536,4 +985,19 @@ function patchAgentRow(row, agent, front) {
 
   const time = row.querySelector('.ar-time');
   if (time) setText(time, formatElapsed(agent.interactionStartedAt));
+
+  // Update number badge
+  const num = getAgentGlobalIndex(agent.paneId);
+  const numEl = row.querySelector('.ar-num');
+  if (num) {
+    if (numEl) { setText(numEl, String(num)); }
+    else {
+      const badge = document.createElement('span');
+      badge.className = 'ar-num';
+      badge.textContent = num;
+      row.insertBefore(badge, row.firstChild);
+    }
+  } else if (numEl) {
+    numEl.remove();
+  }
 }

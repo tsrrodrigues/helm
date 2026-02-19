@@ -61,7 +61,7 @@ const paneTaskNames = new Map();    // paneId → AI-generated short task name
 const lastTaskRenameAt = new Map(); // paneId → timestamp
 const TASK_RENAME_COOLDOWN_MS = 30000;
 const paneTaskInitialized = new Set(); // panes that already got an initial name
-let cachedState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+let cachedState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
 // ── File helpers ──────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ function getAgentInfo(panePids, processTree) {
 // ── tmux helpers ──────────────────────────────────────────────────────────
 
 async function listTmuxPanes() {
-  const fmt = '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}';
+  const fmt = '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}\t#{session_attached}\t#{window_active}\t#{pane_active}';
   const res = await execCmd('tmux', ['list-panes', '-a', '-F', fmt]);
   if (!res.ok) return null;
 
@@ -191,8 +191,8 @@ async function listTmuxPanes() {
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [sessionName, windowName, paneId, command, panePid, paneTitle, panePath] = line.split('\t');
-      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '' };
+      const [sessionName, windowName, paneId, command, panePid, paneTitle, panePath, sessionAttached, windowActive, paneActive] = line.split('\t');
+      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '', isActive: sessionAttached === '1' && windowActive === '1' && paneActive === '1' };
     })
     .filter((p) => p.paneId && p.sessionName);
 }
@@ -385,7 +385,7 @@ async function suggestPaneTask(paneId, output, status) {
 
 async function buildState() {
   const panes = await listTmuxPanes();
-  if (!panes) return { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+  if (!panes) return { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 
   const now = Date.now();
   const names = readNames();
@@ -498,8 +498,12 @@ async function buildState() {
   const waitingAgents = fronts.flatMap(f => f.agents.map(a => ({ ...a, frontName: f.name }))).filter(a => a.status === 'waiting');
   waitingAgents.sort((a, b) => (a.waitingSince || Infinity) - (b.waitingSince || Infinity));
 
+  // Find the currently active pane (attached session, active window, active pane)
+  const activePaneObj = panes.find(p => p.isActive);
+
   return {
     fronts,
+    activePane: activePaneObj ? activePaneObj.paneId : null,
     summary: {
       total: fronts.length,
       totalAgents: fronts.reduce((n, f) => n + f.agents.length, 0),

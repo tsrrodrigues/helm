@@ -8,10 +8,11 @@ const WebSocket = require('ws');
 
 let win;
 let daemonSocket;
-let latestState = { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
+const pillPosFile = path.join(helmDir, 'pill-position.json');
 
 const sysEnv = {
   ...process.env,
@@ -102,6 +103,7 @@ const TERMINAL_BUNDLE_IDS = new Set([
 let aeroWindowId = null;
 let lastWorkspace = null;
 let lastActiveApp = null;
+let lastExternalApp = null; // last non-Helm app (to restore focus)
 
 function startOverlayTracking() {
   // Resolve our AeroSpace window ID once the window is ready
@@ -136,6 +138,7 @@ function startOverlayTracking() {
     ], true);
     if (ok && appId && appId !== lastActiveApp) {
       lastActiveApp = appId;
+      if (appId !== 'com.github.Electron') lastExternalApp = appId;
       const isTerminal = TERMINAL_BUNDLE_IDS.has(appId);
       if (win && !win.isDestroyed()) {
         win.webContents.send('active-app-changed', { appId, isTerminal });
@@ -144,17 +147,77 @@ function startOverlayTracking() {
   }, 500);
 }
 
-// ── Window ────────────────────────────────────────────────────────────────
-function createWindow() {
+// ── Pill position persistence ─────────────────────────────────────────────
+function loadPillPosition() {
+  try {
+    const data = JSON.parse(fs.readFileSync(pillPosFile, 'utf8'));
+    if (typeof data.x === 'number' && typeof data.y === 'number') return data;
+  } catch {}
+  // Fallback: top-right corner
   const { workArea } = screen.getPrimaryDisplay();
-  const width = 900;
-  const x = Math.round(workArea.x + (workArea.width - width) / 2);
+  return { x: workArea.x + workArea.width - PILL_W - 20, y: workArea.y + 10 };
+}
+
+function savePillPosition(x, y) {
+  writeJson(pillPosFile, { x, y });
+}
+
+// ── Window ────────────────────────────────────────────────────────────────
+const PILL_W = 280;
+const PILL_H = 56;
+const PANEL_W = 990;
+const PANEL_H = 620;  // fixed max — content scrolls inside
+const GAP = 8;
+let currentLayout = null;
+
+function computeExpandedBounds(pillX, pillY) {
+  const { workArea } = screen.getPrimaryDisplay();
+
+  // Horizontal: center panel on pill, clamp to screen
+  let px = pillX + Math.round(PILL_W / 2) - Math.round(PANEL_W / 2);
+  px = Math.max(workArea.x, Math.min(px, workArea.x + workArea.width - PANEL_W));
+
+  // Vertical: prefer below pill, flip above if not enough space
+  const spaceBelow = (workArea.y + workArea.height) - (pillY + PILL_H + GAP);
+  const spaceAbove = pillY - workArea.y - GAP;
+  const panelBelow = spaceBelow >= PANEL_H || spaceBelow >= spaceAbove;
+
+  let winY, winH;
+  if (panelBelow) {
+    winY = pillY;
+    winH = PILL_H + GAP + PANEL_H;
+  } else {
+    winY = pillY - GAP - PANEL_H;
+    winY = Math.max(workArea.y, winY);
+    winH = (pillY + PILL_H) - winY;
+  }
+
+  const winX = Math.min(pillX, px);
+  const winW = Math.max(pillX + PILL_W, px + PANEL_W) - winX;
+
+  return {
+    winBounds: { x: winX, y: winY, width: winW, height: winH },
+    layout: {
+      pillOffsetX: pillX - winX,
+      pillOffsetY: pillY - winY,
+      panelOffsetX: px - winX,
+      panelOffsetY: panelBelow ? (pillY + PILL_H + GAP) - winY : 0,
+      panelW: PANEL_W,
+      panelH: PANEL_H
+    }
+  };
+}
+
+function createWindow() {
+  const pos = loadPillPosition();
+  const { winBounds, layout } = computeExpandedBounds(pos.x, pos.y);
+  currentLayout = layout;
 
   win = new BrowserWindow({
-    width,
-    height: 52,
-    x,
-    y: 0,
+    width: winBounds.width,
+    height: winBounds.height,
+    x: winBounds.x,
+    y: winBounds.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -162,7 +225,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     show: false,
-    focusable: true,
+    focusable: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -179,6 +242,7 @@ function createWindow() {
     if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
   });
 
+
   // Periodic re-assert every 2s — ensures overlay survives workspace switches
   setInterval(() => {
     if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
@@ -187,6 +251,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
   win.once('ready-to-show', () => {
+    // Start with passthrough — renderer toggles on hover via elementFromPoint
     win.setIgnoreMouseEvents(true, { forward: true });
     win.show();
   });
@@ -233,13 +298,18 @@ function watchRenderer() {
 app.setName('Helm');
 
 app.whenReady().then(() => {
+  if (app.dock) app.dock.hide(); // accessory app — never steals focus
   ensureDir();
   createWindow();
   connectDaemon();
   watchRenderer();
   startOverlayTracking();
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    if (win && !win.isDestroyed()) win.webContents.send('shortcut-fired');
+  globalShortcut.register('Control+H', () => {
+    if (win && !win.isDestroyed()) {
+      win.setFocusable(true);
+      win.focus();
+      win.webContents.send('shortcut-fired');
+    }
   });
 });
 
@@ -251,13 +321,61 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => app.quit());
 
 // ── IPC handlers ──────────────────────────────────────────────────────────
-ipcMain.on('resize-window', (_e, height) => {
+// Returns current layout (no resize)
+ipcMain.on('get-layout', (e) => {
+  e.returnValue = currentLayout;
+});
+
+// Recalculate bounds after drag — resizes window, returns new layout
+ipcMain.on('recalculate-bounds', (e) => {
+  if (!win || win.isDestroyed()) { e.returnValue = null; return; }
+
+  const [wx, wy] = win.getPosition();
+  const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
+  const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
+
+  const { winBounds, layout } = computeExpandedBounds(pillX, pillY);
+  currentLayout = layout;
+
+  win.setBounds(winBounds, false);
+  e.returnValue = layout;
+});
+
+ipcMain.on('move-window', (_e, dx, dy) => {
   if (!win || win.isDestroyed()) return;
-  const { workArea } = screen.getPrimaryDisplay();
-  const width = 900;
-  const x = Math.round(workArea.x + (workArea.width - width) / 2);
-  const h = Math.max(52, Math.min(620, Number(height) || 52));
-  win.setBounds({ x, y: 0, width, height: h }, true);
+  const [x, y] = win.getPosition();
+  win.setPosition(x + dx, y + dy);
+});
+
+ipcMain.on('refocus-previous-app', () => {
+  if (lastExternalApp) {
+    runFile('osascript', [
+      '-e', `tell application id "${lastExternalApp}" to activate`
+    ], true);
+  }
+});
+
+ipcMain.on('blur-window', () => {
+  if (win && !win.isDestroyed()) win.setFocusable(false);
+  if (lastExternalApp) {
+    runFile('osascript', ['-e', `tell application id "${lastExternalApp}" to activate`], true);
+  }
+});
+
+ipcMain.on('save-pill-position', (_e, x, y) => {
+  if (x == null || y == null) {
+    // Derive pill screen position from window position + layout offset
+    if (win && !win.isDestroyed() && currentLayout) {
+      const [wx, wy] = win.getPosition();
+      savePillPosition(wx + currentLayout.pillOffsetX, wy + currentLayout.pillOffsetY);
+    }
+  } else {
+    savePillPosition(x, y);
+  }
+});
+
+ipcMain.handle('get-pill-position', () => {
+  return loadPillPosition();
 });
 
 ipcMain.on('set-ignore-mouse', (e, ignore) => {
@@ -268,14 +386,16 @@ ipcMain.on('set-ignore-mouse', (e, ignore) => {
 ipcMain.on('navigate-to-pane', async (_e, sessionName, windowName, paneId, weztermTabId) => {
   console.log('[helm] navigate →', { sessionName, windowName, paneId, weztermTabId });
 
-  // Step 1: select tmux window + pane first (works even without WezTerm tab id)
-  if (sessionName && windowName) {
-    const r = await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
-    console.log('[helm] select-window:', r.ok ? 'ok' : r.error?.message);
-  }
+  // Step 1: select tmux window + pane via paneId (globally unique, avoids
+  // ambiguity when multiple windows share the same name like "bash")
   if (paneId) {
-    const r = await runFile('tmux', ['select-pane', '-t', String(paneId)]);
-    console.log('[helm] select-pane:', r.ok ? 'ok' : r.error?.message);
+    const rw = await runFile('tmux', ['select-window', '-t', String(paneId)]);
+    console.log('[helm] select-window:', rw.ok ? 'ok' : rw.error?.message);
+    const rp = await runFile('tmux', ['select-pane', '-t', String(paneId)]);
+    console.log('[helm] select-pane:', rp.ok ? 'ok' : rp.error?.message);
+  } else if (sessionName && windowName) {
+    const r = await runFile('tmux', ['select-window', '-t', `${sessionName}:${windowName}`]);
+    console.log('[helm] select-window (fallback):', r.ok ? 'ok' : r.error?.message);
   }
 
   // Step 2: activate WezTerm tab if we have the id
@@ -311,4 +431,44 @@ ipcMain.handle('get-front-order', () => {
   try {
     return JSON.parse(fs.readFileSync(path.join(helmDir, 'front-order.json'), 'utf8'));
   } catch { return []; }
+});
+
+// ── Session/window management ──────────────────────────────────────────────
+ipcMain.handle('create-session', async (_e, name) => {
+  if (!name || typeof name !== 'string') return { ok: false, error: 'invalid name' };
+  const safe = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  if (!safe) return { ok: false, error: 'invalid name after sanitize' };
+
+  const home = os.homedir();
+  console.error('[helm] create-session:', safe, 'cwd:', home);
+  const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', home]);
+  console.error('[helm] create-session result:', JSON.stringify(r));
+  if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+
+  // Open in WezTerm
+  if (weztermBin) {
+    await runFile(weztermBin, ['cli', 'spawn', '--cwd', os.homedir(), '--', 'tmux', 'attach', '-t', safe], true);
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('create-window', async (_e, sessionName) => {
+  if (!sessionName) return { ok: false, error: 'missing sessionName' };
+  const r = await runFile('tmux', ['new-window', '-t', sessionName]);
+  if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+  return { ok: true };
+});
+
+ipcMain.handle('kill-session', async (_e, sessionName) => {
+  if (!sessionName) return { ok: false, error: 'missing sessionName' };
+  const r = await runFile('tmux', ['kill-session', '-t', sessionName]);
+  if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+  return { ok: true };
+});
+
+ipcMain.handle('kill-window', async (_e, paneId) => {
+  if (!paneId) return { ok: false, error: 'missing paneId' };
+  const r = await runFile('tmux', ['kill-window', '-t', String(paneId)]);
+  if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+  return { ok: true };
 });
