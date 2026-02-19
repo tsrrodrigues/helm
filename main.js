@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, Notification } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -14,6 +14,7 @@ let isExpanded = false;
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
 const pillPosFile = path.join(helmDir, 'pill-position.json');
+const helmNotifierBin = path.join(helmDir, 'HelmAlert.app', 'Contents', 'MacOS', 'terminal-notifier');
 
 const sysEnv = {
   ...process.env,
@@ -274,12 +275,12 @@ function connectDaemon() {
         for (const a of f.agents) {
           const pa = prevAgents.get(a.paneId);
           if (pa && pa.status === 'running' && a.status === 'waiting') {
-            new Notification({
-              title: f.name || 'Helm',
-              body: `${a.task || a.command} terminou`,
-              icon: path.join(__dirname, 'assets', 'icon.png'),
-              sound: 'Glass'
-            }).show();
+            execFile(helmNotifierBin, [
+              '-title', f.name || 'Helm',
+              '-message', `${a.task || a.command} terminou`,
+              '-sound', 'Pop',
+              '-group', `helm-${a.paneId}`
+            ], { env: sysEnv }, () => {});
           }
         }
       }

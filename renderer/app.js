@@ -478,6 +478,13 @@ function preselectAgent() {
   const activeWaiting = activeAgents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
   if (activeWaiting) { state.selectedPane = activeWaiting; ensureSelectedVisible(); return; }
 
+  // Fallback: the currently active pane (if it's an agent in this session)
+  const activePaneId = state.data?.activePane;
+  if (activePaneId && activeAgents.length) {
+    const activeMatch = activeAgents.find(a => a.paneId === activePaneId);
+    if (activeMatch) { state.selectedPane = activeMatch; ensureSelectedVisible(); return; }
+  }
+
   // Fallback: first agent from active session
   if (activeAgents.length) { state.selectedPane = activeAgents[0]; ensureSelectedVisible(); return; }
 

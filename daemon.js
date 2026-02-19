@@ -657,10 +657,10 @@ async function buildState() {
   const waitingAgents = fronts.flatMap(f => f.agents.map(a => ({ ...a, frontName: f.name }))).filter(a => a.status === 'waiting');
   waitingAgents.sort((a, b) => (a.waitingSince || Infinity) - (b.waitingSince || Infinity));
 
-  // Find the currently active pane (attached session, active window, active pane)
-  const activePaneObj = panes.find(p => p.isActive);
-
   // Prefer WezTerm's focused tab to determine the active session
+  const activePaneObj = wzActiveSession
+    ? panes.find(p => p.isActive && p.sessionName === wzActiveSession)
+    : panes.find(p => p.isActive);
   const activeSessionName = wzActiveSession || (activePaneObj ? activePaneObj.sessionName : null);
 
   return {
