@@ -326,9 +326,9 @@ function statusForPane(pane, output, now, hasActiveChildren) {
     // Spinners visible OR output changed without a wait prompt → running
     status = 'running';
     waitingSince = null;
-  } else if (isAgent && explicitWait && stableFor >= WAIT_WITH_PROMPT_MS) {
+  } else if (isAgent && explicitWait && (stableFor >= WAIT_WITH_PROMPT_MS || prev?.waitingSince)) {
     // Recognized wait prompt + stable for 3s → waiting
-    // (output may have changed cosmetically, e.g. status bar file count)
+    // OR: already waiting + cosmetic change (e.g. status bar file count) → stay waiting
     status = 'waiting';
     waitingSince = waitingSince || now - stableFor;
   } else if (isAgent && !changed && stableFor >= WAIT_NO_PROMPT_MS) {
