@@ -58,6 +58,8 @@ const interactionStart = new Map(); // paneId → timestamp (start of current in
 const paneTaskNames = new Map();    // paneId → AI-generated short task name
 const paneTaskInitialized = new Set(); // panes that already got an initial name
 const paneWaitSummaries = new Map();   // paneId → AI-generated context summary when waiting
+const hookWaitingOverride = new Map(); // paneId → { timestamp, cwd, sessionId }
+const HOOK_TTL_MS = 30000; // 30s TTL for hook overrides
 let cachedState = { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
@@ -299,12 +301,34 @@ function statusForPane(pane, output, now, hasActiveChildren) {
   // Process tree override: if agent has active (non-persistent) children,
   // it's definitely running a tool — terminal heuristics don't matter
   if (hasActiveChildren === true) {
+    hookWaitingOverride.delete(pane.paneId); // agent resumed, clear hook override
     paneMemory.set(pane.paneId, {
       output,
       lastChangedAt: Date.now(),
       waitingSince: null
     });
     return { status: 'running', waitingSince: null };
+  }
+
+  // Hook override: Claude Code Stop hook signaled this pane is waiting
+  const hookOverride = hookWaitingOverride.get(pane.paneId);
+  if (hookOverride) {
+    const hookAge = now - hookOverride.timestamp;
+    const prev = paneMemory.get(pane.paneId);
+    const changed = !prev || prev.output !== output;
+    const activelyRunning = hasRunIndicator(output.split('\n').slice(-4));
+    if (hookAge > HOOK_TTL_MS || (changed && activelyRunning)) {
+      // Expired or agent clearly resumed — clear override
+      hookWaitingOverride.delete(pane.paneId);
+    } else {
+      // Trust the hook: mark as waiting immediately
+      paneMemory.set(pane.paneId, {
+        output,
+        lastChangedAt: prev?.lastChangedAt || now,
+        waitingSince: hookOverride.timestamp
+      });
+      return { status: 'waiting', waitingSince: hookOverride.timestamp };
+    }
   }
 
   const allLines = output.split('\n');
@@ -680,6 +704,41 @@ async function tick() {
 // Debug + API HTTP server
 const http = require('http');
 http.createServer(async (req, res) => {
+  // ── POST /hook-stop — Claude Code hook signals agent stopped ──
+  if (req.method === 'POST' && req.url === '/hook-stop') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { paneId, cwd, sessionId } = JSON.parse(body);
+        if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+
+        const prevStatus = prevPaneStatus.get(paneId);
+        hookWaitingOverride.set(paneId, { timestamp: Date.now(), cwd: cwd || '', sessionId: sessionId || '' });
+        console.log(`[helm] hook-stop: pane=${paneId} prev=${prevStatus || 'unknown'}`);
+
+        // If transitioning running→waiting, generate wait summary (fire-and-forget)
+        if (prevStatus === 'running') {
+          const output = await capturePane(paneId);
+          const panes = await listTmuxPanes();
+          const pane = panes?.find(p => p.paneId === paneId);
+          if (pane) generateWaitSummary(paneId, output, pane.panePath);
+        }
+
+        // Force immediate broadcast
+        cachedStateJson = '{}';
+        tick();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /rename-agent — AI rename based on major front ──
   if (req.method === 'POST' && req.url === '/rename-agent') {
     let body = '';
