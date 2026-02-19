@@ -58,7 +58,7 @@ const interactionStart = new Map(); // paneId → timestamp (start of current in
 const paneTaskNames = new Map();    // paneId → AI-generated short task name
 const paneTaskInitialized = new Set(); // panes that already got an initial name
 const paneWaitSummaries = new Map();   // paneId → AI-generated context summary when waiting
-let cachedState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+let cachedState = { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
 // ── File helpers ──────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ function writeConfirmed(sessionName) {
   writeJson(CONFIRMED_FILE, c);
 }
 
-const PANE_TASKS_VERSION = 2; // bump to force regeneration of all task names
+const PANE_TASKS_VERSION = 3; // bump to force regeneration of all task names
 const PANE_TASKS_VERSION_FILE = path.join(HELM_DIR, 'pane-tasks-version.json');
 
 function loadPaneTasks() {
@@ -215,6 +215,15 @@ async function capturePane(paneId) {
   // Trim trailing empty lines then take last 20
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
   return lines.slice(-20).join('\n');
+}
+
+async function capturePaneStart(paneId) {
+  // Capture from the very start of the scrollback history
+  const res = await execCmd('tmux', ['capture-pane', '-p', '-S', '-', '-t', paneId]);
+  if (!res.ok) return '';
+  const lines = res.stdout.split('\n');
+  // Take first 150 lines — enough to find the initial user prompt in Claude Code / Codex
+  return lines.slice(0, 150).join('\n');
 }
 
 // Strip ANSI escape codes
@@ -374,23 +383,30 @@ async function suggestName(sessionName, panePath, command) {
 }
 
 async function suggestPaneTask(paneId, output, panePath) {
-  const lines = output.split('\n').filter(Boolean).slice(-20);
-  const recentOutput = lines.join('\n').slice(-1500);
+  // Capture the beginning of the session to find the user's first prompt
+  const startOutput = await capturePaneStart(paneId);
   const projectDir = panePath ? path.basename(panePath) : '(unknown)';
-  const prompt = `Give a 2-4 word fixed title for this terminal tab. The title identifies the SCOPE or AREA of work, not the current action. It should remain valid even as the agent moves between tasks.
+  const prompt = `You are reading the beginning of an AI coding agent session (Claude Code, Codex, or similar).
+Your job: find the FIRST instruction/prompt the user gave to the agent and generate a 2-4 word task name from it.
+
+Where to look for the user's prompt:
+- In Claude Code: the user's message appears after the ">" prompt line, or as an argument in the command like \`claude "some text"\`
+- In Codex: similar pattern with user input after the prompt
+- The first user message is usually within the first 50-80 lines of the session
 
 Rules:
-- Identify the module, feature, or subsystem: "auth middleware", "socket ipc", "overlay css", "daemon polling"
-- Do NOT describe actions (no "fixing", "adding", "refactoring", "implementing")
-- Do NOT repeat the project name "${projectDir}" — it's already shown separately
-- Lowercase, no quotes
-- Be specific: prefer "pane status detection" over "daemon"
+- Extract the KEY INTENT from the user's first message (e.g. "fix auth bug", "add dark mode", "refactor api routes", "session name logic")
+- Use the actual keywords from the user's prompt — be specific
+- Do NOT use generic terms (no "code review", "terminal session", "project work")
+- Do NOT repeat the project name "${projectDir}"
+- Do NOT describe actions generically (no "implement feature", "update code")
+- lowercase, no quotes
+- 2-4 words only
 
-Project: ${projectDir}
-Terminal output (last 20 lines):
-${recentOutput}
+Session start (first ~150 lines):
+${startOutput.slice(0, 4000)}
 
-Reply with ONLY the title.`;
+Reply with ONLY the task name.`;
   const raw = await askClaude(prompt);
   return raw ? cleanTaskName(raw, null) : null;
 }
@@ -422,7 +438,7 @@ Reply with ONLY the bullets.`;
 
 async function buildState() {
   const panes = await listTmuxPanes();
-  if (!panes) return { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+  if (!panes) return { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 
   const now = Date.now();
   const names = readNames();
@@ -535,6 +551,7 @@ async function buildState() {
   return {
     fronts,
     activePane: activePaneObj ? activePaneObj.paneId : null,
+    activeSessionName: activePaneObj ? activePaneObj.sessionName : null,
     summary: {
       total: fronts.length,
       totalAgents: fronts.reduce((n, f) => n + f.agents.length, 0),

@@ -1,5 +1,5 @@
 const state = {
-  data: { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } },
+  data: { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } },
   open: false,
   selectedPane: null,
   inlineEditSession: null,
@@ -461,11 +461,11 @@ function preselectAgent() {
   const firstWaiting = agents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
   if (firstWaiting) { state.selectedPane = firstWaiting; ensureSelectedVisible(); return; }
 
-  // Fallback: active pane (currently focused in tmux)
-  const activePaneId = state.data?.activePane;
-  if (activePaneId) {
-    const active = agents.find(a => a.paneId === activePaneId);
-    if (active) { state.selectedPane = active; ensureSelectedVisible(); return; }
+  // Fallback: first agent in the currently viewed session (active tmux session)
+  const activeSession = state.data?.activeSessionName;
+  if (activeSession) {
+    const fromActive = agents.find(a => a.sessionName === activeSession);
+    if (fromActive) { state.selectedPane = fromActive; ensureSelectedVisible(); return; }
   }
 
   // Fallback: first agent
@@ -544,7 +544,7 @@ async function submitCreateSession() {
   const name = input.value.trim();
   if (!name) return;
   state.creatingSession = false;
-  render();
+  togglePanel(false);
   const result = await window.helm.createSession(name);
   if (!result.ok) console.error('[helm] create-session failed:', result.error);
 }
@@ -574,6 +574,7 @@ async function createWindowForSelected() {
   const agent = state.selectedPane;
   const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === agent.paneId));
   if (!front) return;
+  togglePanel(false);
   const result = await window.helm.createWindow(front.sessionName);
   if (!result.ok) console.error('[helm] create-window failed:', result.error);
 }
@@ -1012,6 +1013,7 @@ function reconcileAgentRows(agentsEl, front) {
     addBtn.textContent = '+ nova window';
     addBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      togglePanel(false);
       const result = await window.helm.createWindow(front.sessionName);
       if (!result.ok) console.error('[helm] create-window failed:', result.error);
     });
