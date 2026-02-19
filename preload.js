@@ -24,5 +24,6 @@ contextBridge.exposeInMainWorld('helm', {
   createWindow: (sessionName, weztermTabId) => ipcRenderer.invoke('create-window', sessionName, weztermTabId),
   killSession: (sessionName) => ipcRenderer.invoke('kill-session', sessionName),
   killWindow: (paneId) => ipcRenderer.invoke('kill-window', paneId),
-  renameAgent: (paneId) => ipcRenderer.invoke('rename-agent', paneId)
+  renameAgent: (paneId) => ipcRenderer.invoke('rename-agent', paneId),
+  manualRenameAgent: (paneId, name) => ipcRenderer.invoke('manual-rename-agent', paneId, name)
 });

@@ -11,7 +11,8 @@ const state = {
   dismissedPanes: new Set(),
   layout: null,  // set on startup from main process (window is always expanded)
   creatingSession: false,
-  confirmingDelete: null  // { paneId, sessionName, type: 'window'|'session' }
+  confirmingDelete: null,  // { paneId, sessionName, type: 'window'|'session' }
+  inlineEditAgent: null    // paneId being manually renamed
 };
 
 const $ = (id) => document.getElementById(id);
@@ -105,7 +106,7 @@ pill.addEventListener('keydown', (e) => { if (e.key === 'Enter') togglePanel(); 
 
 document.addEventListener('keydown', (e) => {
   // Skip keyboard nav when editing inline name
-  if (state.inlineEditSession) return;
+  if (state.inlineEditSession || state.inlineEditAgent) return;
 
   // Handle create session input
   if (state.creatingSession) {
@@ -167,6 +168,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'r' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     renameSelectedAgent();
+  } else if (e.key === 'R' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    manualRenameAgent();
   } else if (e.key === 'n' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     createWindowForSelected();
@@ -588,6 +592,50 @@ async function renameSelectedAgent() {
   // On success, daemon broadcasts new state — render will pick it up
 }
 
+// ── Manual rename agent ─────────────────────────────────────────────────────
+
+function manualRenameAgent() {
+  if (!state.selectedPane) return;
+  const paneId = state.selectedPane.paneId;
+  const row = document.querySelector(`.agent-row[data-pane="${paneId}"]`);
+  const nameEl = row?.querySelector('.ar-name');
+  if (!nameEl) return;
+
+  state.inlineEditAgent = paneId;
+  const currentName = nameEl.textContent;
+  let done = false;
+
+  nameEl.innerHTML = `<input class="ar-name-input" value="${escapeHtml(currentName)}" />`;
+  const input = nameEl.querySelector('.ar-name-input');
+  input.focus();
+  input.select();
+
+  const finish = (name) => {
+    if (done) return;
+    done = true;
+    state.inlineEditAgent = null;
+    input.removeEventListener('keydown', onKey);
+    input.removeEventListener('blur', onBlur);
+    nameEl.textContent = name || currentName;
+    if (name && name !== currentName) {
+      window.helm.manualRenameAgent(paneId, name).catch(err =>
+        console.error('[helm] manual rename failed:', err)
+      );
+    }
+  };
+
+  const onKey = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(input.value.trim()); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+  };
+
+  const onBlur = () => finish(null);
+
+  input.addEventListener('keydown', onKey);
+  input.addEventListener('blur', onBlur);
+}
+
 // ── Navigate to editor (nvim) ──────────────────────────────────────────────
 
 function navigateToEditor() {
@@ -747,7 +795,7 @@ function render() {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
-      setText(hint, 'j/k navegar · Enter ir · x dispensar · r renomear · v nvim · n window · d/D deletar · N sessão');
+      setText(hint, 'j/k navegar · Enter ir · x dispensar · r/R renomear · v nvim · n window · d/D deletar · N sessão');
     }
   }
 

@@ -753,6 +753,27 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // ── POST /manual-rename-agent — user-provided name ──
+  if (req.method === 'POST' && req.url === '/manual-rename-agent') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const { paneId, name } = JSON.parse(body);
+        if (!paneId || !name) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId or name' })); return; }
+        paneTaskNames.set(paneId, name);
+        savePaneTasks();
+        cachedStateJson = '{}';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, name }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /rename-agent — AI rename based on major front ──
   if (req.method === 'POST' && req.url === '/rename-agent') {
     let body = '';

@@ -582,3 +582,25 @@ ipcMain.handle('rename-agent', async (_e, paneId) => {
     req.end();
   });
 });
+
+ipcMain.handle('manual-rename-agent', async (_e, paneId, name) => {
+  if (!paneId || !name) return { ok: false, error: 'missing paneId or name' };
+  const http = require('http');
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({ paneId, name });
+    const req = http.request('http://127.0.0.1:7374/manual-rename-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+    }, (res) => {
+      let body = '';
+      res.on('data', d => { body += d; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
+      });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.write(payload);
+    req.end();
+  });
+});

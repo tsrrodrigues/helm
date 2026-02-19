@@ -317,6 +317,19 @@ html, body {
   word-break: break-word;
   letter-spacing: -.01em;
 }
+.ar-name-input {
+  width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #eee;
+  border-radius: 4px;
+  padding: 1px 6px;
+  outline: none;
+  letter-spacing: -.01em;
+}
+.ar-name-input:focus { border-color: rgba(108,99,255,.6); }
 
 .ar-dismiss {
   font-size: 13px;
