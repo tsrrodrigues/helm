@@ -359,15 +359,15 @@ async function weztermMap(sessions) {
     execCmd('wezterm', ['cli', 'list', '--format', 'json']),
     execCmd('tmux', ['list-clients', '-F', '#{client_tty}\t#{session_name}'])
   ]);
-  if (!wzRes.ok) return {};
+  if (!wzRes.ok) return { tabMap: {}, activeSession: null };
 
   try {
     const items = JSON.parse(wzRes.stdout || '[]');
 
-    // Build TTY → WezTerm tab_id map
+    // Build TTY → WezTerm tab info map
     const ttyToTab = {};
     for (const item of items) {
-      if (item.tty_name) ttyToTab[item.tty_name] = item.tab_id ?? item.tabId ?? null;
+      if (item.tty_name) ttyToTab[item.tty_name] = { tabId: item.tab_id ?? item.tabId ?? null, isActive: !!item.is_active };
     }
 
     // Build session → TTY map from tmux clients
@@ -379,18 +379,20 @@ async function weztermMap(sessions) {
       }
     }
 
-    // Cross-reference: session → TTY → tab_id
-    const map = {};
+    // Cross-reference: session → TTY → tab_id, and find WezTerm-active session
+    const tabMap = {};
+    let activeSession = null;
     for (const sessionName of sessions) {
       const tty = sessionToTty[sessionName];
-      if (tty && ttyToTab[tty] != null) {
-        map[sessionName] = ttyToTab[tty];
+      if (tty && ttyToTab[tty]) {
+        tabMap[sessionName] = ttyToTab[tty].tabId;
+        if (ttyToTab[tty].isActive) activeSession = sessionName;
       }
     }
-    return map;
+    return { tabMap, activeSession };
   } catch (e) {
     console.error('[helm] weztermMap parse error:', e.message);
-    return {};
+    return { tabMap: {}, activeSession: null };
   }
 }
 
@@ -504,7 +506,7 @@ async function buildState() {
   const names = readNames();
   const confirmed = readConfirmed();
   const sessions = [...new Set(panes.map(p => p.sessionName))];
-  const tabMap = await weztermMap(sessions);
+  const { tabMap, activeSession: wzActiveSession } = await weztermMap(sessions);
 
   // Build process tree once per tick
   const processTree = await getProcessTree();
@@ -530,7 +532,31 @@ async function buildState() {
     const info = agentInfo.get(pane.paneId);
     const hasActiveChildren = info ? info.hasActiveChildren : undefined;
     const st = statusForPane(pane, output, now, hasActiveChildren);
-    if (!st) continue;
+    // Ensure front exists for every session with panes
+    if (!frontsMap.has(pane.sessionName)) {
+      frontsMap.set(pane.sessionName, {
+        name: names[pane.sessionName] || pane.sessionName,
+        sessionName: pane.sessionName,
+        weztermTabId: tabMap[pane.sessionName] || null,
+        aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName && !confirmed[pane.sessionName]),
+        agents: [],
+        editorPanes: []
+      });
+    }
+
+    // Track editor panes (vim/nvim) separately — not as agents
+    if (!st) {
+      const cmd = pane.command.toLowerCase();
+      if (cmd === 'vim' || cmd === 'nvim') {
+        frontsMap.get(pane.sessionName).editorPanes.push({
+          paneId: pane.paneId,
+          windowName: pane.windowName,
+          command: pane.command,
+          panePath: pane.panePath
+        });
+      }
+      continue;
+    }
 
     // Track interaction start: reset when transitioning from waiting/idle → running
     const prevStatus = prevPaneStatus.get(pane.paneId);
@@ -555,16 +581,6 @@ async function buildState() {
       });
     }
 
-    if (!frontsMap.has(pane.sessionName)) {
-      frontsMap.set(pane.sessionName, {
-        name: names[pane.sessionName] || pane.sessionName,
-        sessionName: pane.sessionName,
-        weztermTabId: tabMap[pane.sessionName] || null,
-        aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName && !confirmed[pane.sessionName]),
-        agents: []
-      });
-    }
-
     const lines = output.split('\n').filter(Boolean);
     const lastOutput = (lines[lines.length - 1] || '').trim().slice(0, 140);
 
@@ -583,9 +599,9 @@ async function buildState() {
   }
 
   const fronts = [...frontsMap.values()].map(f => {
-    // Derive projectDir from the most frequent panePath basename
+    // Derive projectDir from the most frequent panePath basename (agents + editors)
     const pathCounts = {};
-    for (const a of f.agents) {
+    for (const a of [...f.agents, ...f.editorPanes]) {
       if (a.panePath) {
         const dir = path.basename(a.panePath);
         pathCounts[dir] = (pathCounts[dir] || 0) + 1;
@@ -608,10 +624,13 @@ async function buildState() {
   // Find the currently active pane (attached session, active window, active pane)
   const activePaneObj = panes.find(p => p.isActive);
 
+  // Prefer WezTerm's focused tab to determine the active session
+  const activeSessionName = wzActiveSession || (activePaneObj ? activePaneObj.sessionName : null);
+
   return {
     fronts,
     activePane: activePaneObj ? activePaneObj.paneId : null,
-    activeSessionName: activePaneObj ? activePaneObj.sessionName : null,
+    activeSessionName,
     summary: {
       total: fronts.length,
       totalAgents: fronts.reduce((n, f) => n + f.agents.length, 0),
@@ -646,9 +665,62 @@ async function tick() {
   }
 }
 
-// Debug HTTP server — GET /debug shows raw pane captures + detection results
+// Debug + API HTTP server
 const http = require('http');
 http.createServer(async (req, res) => {
+  // ── POST /rename-agent — AI rename based on major front ──
+  if (req.method === 'POST' && req.url === '/rename-agent') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { paneId } = JSON.parse(body);
+        if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+
+        const output = await capturePane(paneId);
+        const startOutput = await capturePaneStart(paneId);
+        const panes = await listTmuxPanes();
+        const pane = panes?.find(p => p.paneId === paneId);
+        const panePath = pane?.panePath || '';
+        const projectDir = panePath ? path.basename(panePath) : '(unknown)';
+
+        const prompt = `You are looking at an AI coding agent session. Identify the MAJOR FRONT of work (the broad theme/goal), NOT the specific current detail or step.
+
+Examples of good names (broad front): "auth system", "overlay ui", "daemon polling", "agent rename"
+Examples of bad names (too specific): "fix bug line 42", "add try-catch", "update variable name"
+
+Project: ${projectDir}
+
+Session start:
+${startOutput.slice(0, 2000)}
+
+Recent output:
+${output.slice(-1500)}
+
+Reply with ONLY a 2-4 word lowercase task name describing the major front of work.`;
+
+        const raw = await askClaude(prompt);
+        const name = cleanTaskName(raw, null);
+        if (name) {
+          paneTaskNames.set(paneId, name);
+          savePaneTasks();
+          // Force broadcast so UI updates immediately
+          cachedStateJson = '{}';
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, name }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'AI returned empty' }));
+        }
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── GET /debug — raw pane captures + detection results ──
   if (req.url !== '/debug') { res.writeHead(404); res.end(); return; }
   const panes = await listTmuxPanes();
   if (!panes) { res.writeHead(200); res.end('no tmux panes\n'); return; }

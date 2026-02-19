@@ -117,6 +117,7 @@ document.addEventListener('keydown', (e) => {
   if (state.focusMode && state.open) {
     if (e.key === 'Enter') { e.preventDefault(); focusNavigate(); }
     else if (e.key === 'x') { e.preventDefault(); focusDismiss(); }
+    else if (e.key === 'v') { e.preventDefault(); navigateToEditor(); }
     else if (e.key === 'Tab') { e.preventDefault(); exitFocusMode(); }
     else if (e.key === 'Escape') { e.preventDefault(); togglePanel(false); if (state.shortcutMode) window.helm.blurWindow(); }
     return;
@@ -163,12 +164,18 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'D' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     initiateDeleteSession();
+  } else if (e.key === 'r' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    renameSelectedAgent();
   } else if (e.key === 'n' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     createWindowForSelected();
   } else if (e.key === 'N' && state.shortcutMode && state.open) {
     e.preventDefault();
     startCreateSession();
+  } else if (e.key === 'v' && state.shortcutMode && state.open) {
+    e.preventDefault();
+    navigateToEditor();
   } else if (e.key === 'Escape' && state.open) {
     e.preventDefault();
     togglePanel(false);
@@ -450,23 +457,26 @@ function preselectAgent() {
   const agents = getNavigableAgents();
   if (!agents.length) { state.selectedPane = null; return; }
 
-  // Prefer oldest waiting agent (not dismissed)
+  const activeSession = state.data?.activeSessionName;
+  const activeAgents = activeSession ? agents.filter(a => a.sessionName === activeSession) : [];
+
+  // Prefer waiting agent from active session (oldest first, not dismissed)
   const oldest = state.data?.summary?.oldestWaiting;
-  if (oldest) {
-    const match = agents.find(a => a.paneId === oldest.paneId && !state.dismissedPanes.has(a.paneId));
+  if (oldest && activeAgents.length) {
+    const match = activeAgents.find(a => a.paneId === oldest.paneId && !state.dismissedPanes.has(a.paneId));
     if (match) { state.selectedPane = match; ensureSelectedVisible(); return; }
   }
 
-  // Fallback: first waiting not dismissed
+  // Fallback: first waiting from active session (not dismissed)
+  const activeWaiting = activeAgents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
+  if (activeWaiting) { state.selectedPane = activeWaiting; ensureSelectedVisible(); return; }
+
+  // Fallback: first agent from active session
+  if (activeAgents.length) { state.selectedPane = activeAgents[0]; ensureSelectedVisible(); return; }
+
+  // Fallback: first waiting globally (not dismissed)
   const firstWaiting = agents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
   if (firstWaiting) { state.selectedPane = firstWaiting; ensureSelectedVisible(); return; }
-
-  // Fallback: first agent in the currently viewed session (active tmux session)
-  const activeSession = state.data?.activeSessionName;
-  if (activeSession) {
-    const fromActive = agents.find(a => a.sessionName === activeSession);
-    if (fromActive) { state.selectedPane = fromActive; ensureSelectedVisible(); return; }
-  }
 
   // Fallback: first agent
   state.selectedPane = agents[0];
@@ -520,6 +530,59 @@ function dismissSelected() {
     state.selectedPane = null;
   }
   render();
+}
+
+// ── AI rename agent ──────────────────────────────────────────────────────
+
+async function renameSelectedAgent() {
+  if (!state.selectedPane) return;
+  const paneId = state.selectedPane.paneId;
+
+  // Visual feedback
+  const row = document.querySelector(`.agent-row[data-pane="${paneId}"]`);
+  const nameEl = row?.querySelector('.ar-name');
+  const prevText = nameEl?.textContent;
+  if (nameEl) nameEl.textContent = 'renomeando...';
+
+  const result = await window.helm.renameAgent(paneId);
+  if (!result.ok) {
+    console.error('[helm] rename failed:', result.error);
+    if (nameEl) nameEl.textContent = prevText || '';
+  }
+  // On success, daemon broadcasts new state — render will pick it up
+}
+
+// ── Navigate to editor (nvim) ──────────────────────────────────────────────
+
+function navigateToEditor() {
+  let editorPane = null;
+  let editorFront = null;
+
+  // Prefer editor pane from the selected agent's front
+  if (state.selectedPane) {
+    const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === state.selectedPane.paneId));
+    if (front && front.editorPanes?.length > 0) {
+      editorPane = front.editorPanes[0];
+      editorFront = front;
+    }
+  }
+
+  // Fallback: first front with editor panes
+  if (!editorPane) {
+    for (const f of (state.data.fronts || [])) {
+      if (f.editorPanes?.length > 0) {
+        editorPane = f.editorPanes[0];
+        editorFront = f;
+        break;
+      }
+    }
+  }
+
+  if (editorPane && editorFront) {
+    window.helm.navigateToPane(editorFront.sessionName, editorPane.windowName, editorPane.paneId, editorFront.weztermTabId);
+    togglePanel(false);
+    window.helm.blurWindow();
+  }
 }
 
 // ── Create session ────────────────────────────────────────────────────────
@@ -642,12 +705,12 @@ function render() {
   const hint = $('shortcut-hint');
   hint.hidden = !state.shortcutMode && !state.focusMode;
   if (state.focusMode) {
-    setText(hint, 'Enter ir · x dispensar · Tab ver tudo · Esc fechar');
+    setText(hint, 'Enter ir · x dispensar · v nvim · Tab ver tudo · Esc fechar');
   } else if (state.shortcutMode) {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
-      setText(hint, 'j/k navegar · Enter ir · x dispensar · n window · d/D deletar · N sessão');
+      setText(hint, 'j/k navegar · Enter ir · x dispensar · r renomear · v nvim · n window · d/D deletar · N sessão');
     }
   }
 
@@ -731,7 +794,13 @@ function createFrontEl(front) {
 
   const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
+  const hasEditors = (front.editorPanes || []).length > 0;
   const accentIdx = projectColor(front.projectDir);
+
+  const summaryParts = [];
+  if (front.agents.length > 0) summaryParts.push(`${effectiveWait} aguardando · ${run} rodando`);
+  if (hasEditors) summaryParts.push('nvim');
+  const summaryText = summaryParts.join(' · ');
 
   el.className = frontClasses(effectiveWait, accentIdx) + (state.openFronts.has(front.sessionName) ? ' open' : '');
 
@@ -747,7 +816,7 @@ function createFrontEl(front) {
       <div class="fagents-summary">
         ${effectiveWait ? '<div class="fas-dot wait"></div>' : ''}
         ${run  ? '<div class="fas-dot run"></div>' : ''}
-        <span class="fas-count ${effectiveWait ? 'alert' : ''}">${effectiveWait} aguardando · ${run} rodando</span>
+        <span class="fas-count ${effectiveWait ? 'alert' : ''}">${summaryText}</span>
       </div>
     </div>
     <div class="fdiv"></div>
@@ -782,9 +851,15 @@ function patchFrontEl(el, front) {
   }
 
   // Summary
+  const hasEditors = (front.editorPanes || []).length > 0;
+  const summaryParts = [];
+  if (front.agents.length > 0) summaryParts.push(`${effectiveWait} aguardando · ${run} rodando`);
+  if (hasEditors) summaryParts.push('nvim');
+  const summaryText = summaryParts.join(' · ');
+
   const fasCount = el.querySelector('.fas-count');
   if (fasCount) {
-    setText(fasCount, `${effectiveWait} aguardando · ${run} rodando`);
+    setText(fasCount, summaryText);
     cls(fasCount, 'alert', effectiveWait > 0);
   }
 
