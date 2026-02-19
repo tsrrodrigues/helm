@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('helm', {
   onActiveApp: (cb) => ipcRenderer.on('active-app-changed', (_event, info) => cb(info)),
   getState: () => ipcRenderer.invoke('get-state'),
   createSession: (name) => ipcRenderer.invoke('create-session', name),
-  createWindow: (sessionName) => ipcRenderer.invoke('create-window', sessionName),
+  createWindow: (sessionName, weztermTabId) => ipcRenderer.invoke('create-window', sessionName, weztermTabId),
   killSession: (sessionName) => ipcRenderer.invoke('kill-session', sessionName),
   killWindow: (paneId) => ipcRenderer.invoke('kill-window', paneId),
   renameAgent: (paneId) => ipcRenderer.invoke('rename-agent', paneId)

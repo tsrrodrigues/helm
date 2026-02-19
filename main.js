@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -261,8 +261,28 @@ function connectDaemon() {
   daemonSocket = new WebSocket('ws://127.0.0.1:7373');
   daemonSocket.on('message', (msg) => {
     try {
+      const prev = latestState;
       latestState = JSON.parse(msg.toString());
       if (win && !win.isDestroyed()) win.webContents.send('state-update', latestState);
+
+      // Notify when agent transitions running → waiting
+      const prevAgents = new Map();
+      for (const f of (prev.fronts || [])) {
+        for (const a of f.agents) prevAgents.set(a.paneId, { ...a, frontName: f.name });
+      }
+      for (const f of latestState.fronts) {
+        for (const a of f.agents) {
+          const pa = prevAgents.get(a.paneId);
+          if (pa && pa.status === 'running' && a.status === 'waiting') {
+            new Notification({
+              title: f.name || 'Helm',
+              body: `${a.task || a.command} terminou`,
+              icon: path.join(__dirname, 'assets', 'icon.png'),
+              sound: 'Glass'
+            }).show();
+          }
+        }
+      }
     } catch (e) { console.error('[helm] ws parse:', e.message); }
   });
   daemonSocket.on('close', () => setTimeout(connectDaemon, 2500));
@@ -506,13 +526,19 @@ ipcMain.handle('create-session', async (_e, name) => {
   return { ok: true };
 });
 
-ipcMain.handle('create-window', async (_e, sessionName) => {
+ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
   if (!sessionName) return { ok: false, error: 'missing sessionName' };
   // Get the current path of the active pane in this session
   const pathRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_current_path}'], true);
   const cwd = pathRes.ok && pathRes.stdout ? pathRes.stdout : os.homedir();
   const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', cwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+
+  // Focus the WezTerm tab and bring it to front
+  if (weztermTabId && weztermBin) {
+    await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
+  }
+  await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
   return { ok: true };
 });
 

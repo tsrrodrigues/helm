@@ -645,7 +645,8 @@ async function createWindowForSelected() {
   const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === agent.paneId));
   if (!front) return;
   togglePanel(false);
-  const result = await window.helm.createWindow(front.sessionName);
+  window.helm.blurWindow();
+  const result = await window.helm.createWindow(front.sessionName, front.weztermTabId);
   if (!result.ok) console.error('[helm] create-window failed:', result.error);
 }
 
@@ -1096,7 +1097,8 @@ function reconcileAgentRows(agentsEl, front) {
     addBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       togglePanel(false);
-      const result = await window.helm.createWindow(front.sessionName);
+      window.helm.blurWindow();
+      const result = await window.helm.createWindow(front.sessionName, front.weztermTabId);
       if (!result.ok) console.error('[helm] create-window failed:', result.error);
     });
     agentsEl.appendChild(addBtn);
