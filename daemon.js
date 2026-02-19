@@ -86,7 +86,7 @@ function writeConfirmed(sessionName) {
   writeJson(CONFIRMED_FILE, c);
 }
 
-const PANE_TASKS_VERSION = 3; // bump to force regeneration of all task names
+const PANE_TASKS_VERSION = 4; // bump to force regeneration of all task names
 const PANE_TASKS_VERSION_FILE = path.join(HELM_DIR, 'pane-tasks-version.json');
 
 function loadPaneTasks() {
@@ -226,6 +226,51 @@ async function capturePaneStart(paneId) {
   return lines.slice(0, 150).join('\n');
 }
 
+function extractFirstPrompt(scrollbackText) {
+  const lines = scrollbackText.split('\n');
+  // Look for the first user prompt marker: ❯ (Claude Code) or lines after `claude "..."`
+  let promptLines = [];
+  let collecting = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Claude Code interactive prompt: line starts with ❯
+    if (!collecting && /^❯\s/.test(trimmed)) {
+      promptLines.push(trimmed.replace(/^❯\s*/, ''));
+      collecting = true;
+      continue;
+    }
+
+    // Inline invocation: `claude "..."` or `claude '...'`
+    if (!collecting) {
+      const inlineMatch = trimmed.match(/\bclaude\s+["'](.+?)["']/);
+      if (inlineMatch) {
+        promptLines.push(inlineMatch[1]);
+        break;
+      }
+      // Codex inline: `codex "..."`
+      const codexMatch = trimmed.match(/\bcodex\s+["'](.+?)["']/);
+      if (codexMatch) {
+        promptLines.push(codexMatch[1]);
+        break;
+      }
+    }
+
+    // If collecting multi-line prompt: continuation lines are indented or plain text
+    // Stop at agent response markers (⏺, tool output, empty line after content)
+    if (collecting) {
+      if (/^⏺/.test(trimmed) || /^\s*$/.test(trimmed) || /^╭/.test(trimmed) || /^>/.test(trimmed)) {
+        break;
+      }
+      promptLines.push(trimmed);
+    }
+  }
+
+  return promptLines.join(' ').trim().slice(0, 500) || null;
+}
+
 // Strip ANSI escape codes
 function stripAnsi(str) {
   // eslint-disable-next-line no-control-regex
@@ -277,13 +322,13 @@ function statusForPane(pane, output, now, hasActiveChildren) {
   let status;
   let waitingSince = prev?.waitingSince || null;
 
-  if (activelyRunning || changed) {
-    // Spinners visible OR output just changed → always running
-    // No prompt can override this — output activity is the strongest signal
+  if (activelyRunning || (changed && !explicitWait)) {
+    // Spinners visible OR output changed without a wait prompt → running
     status = 'running';
     waitingSince = null;
-  } else if (isAgent && !changed && explicitWait && stableFor >= WAIT_WITH_PROMPT_MS) {
-    // Output stable for 3s + recognized wait prompt → waiting
+  } else if (isAgent && explicitWait && stableFor >= WAIT_WITH_PROMPT_MS) {
+    // Recognized wait prompt + stable for 3s → waiting
+    // (output may have changed cosmetically, e.g. status bar file count)
     status = 'waiting';
     waitingSince = waitingSince || now - stableFor;
   } else if (isAgent && !changed && stableFor >= WAIT_NO_PROMPT_MS) {
@@ -295,9 +340,12 @@ function statusForPane(pane, output, now, hasActiveChildren) {
     waitingSince = null;
   }
 
+  // Cosmetic change = output changed but wait prompt present and no run indicators.
+  // Don't reset stability timer for cosmetic changes (e.g. status bar file count update).
+  const cosmeticChange = changed && explicitWait && !activelyRunning;
   paneMemory.set(pane.paneId, {
     output,
-    lastChangedAt: changed ? now : (prev?.lastChangedAt || now),
+    lastChangedAt: (changed && !cosmeticChange) ? now : (prev?.lastChangedAt || now),
     waitingSince: status === 'waiting' ? waitingSince : null
   });
 
@@ -385,25 +433,37 @@ async function suggestName(sessionName, panePath, command) {
 async function suggestPaneTask(paneId, output, panePath) {
   // Capture the beginning of the session to find the user's first prompt
   const startOutput = await capturePaneStart(paneId);
+  const userPrompt = extractFirstPrompt(startOutput);
   const projectDir = panePath ? path.basename(panePath) : '(unknown)';
-  const prompt = `You are reading the beginning of an AI coding agent session (Claude Code, Codex, or similar).
-Your job: find the FIRST instruction/prompt the user gave to the agent and generate a 2-4 word task name from it.
 
-Where to look for the user's prompt:
-- In Claude Code: the user's message appears after the ">" prompt line, or as an argument in the command like \`claude "some text"\`
-- In Codex: similar pattern with user input after the prompt
-- The first user message is usually within the first 50-80 lines of the session
+  if (userPrompt) {
+    // We have the user's actual first prompt — generate name directly from it
+    const prompt = `Generate a 2-4 word task name from this user instruction to an AI coding agent.
+
+User's instruction: "${userPrompt}"
 
 Rules:
-- Extract the KEY INTENT from the user's first message (e.g. "fix auth bug", "add dark mode", "refactor api routes", "session name logic")
-- Use the actual keywords from the user's prompt — be specific
-- Do NOT use generic terms (no "code review", "terminal session", "project work")
+- Use the KEY WORDS from the instruction (e.g. "fix auth bug", "agent name logic", "pill close behavior")
 - Do NOT repeat the project name "${projectDir}"
-- Do NOT describe actions generically (no "implement feature", "update code")
 - lowercase, no quotes
 - 2-4 words only
 
-Session start (first ~150 lines):
+Reply with ONLY the task name.`;
+    const raw = await askClaude(prompt);
+    return raw ? cleanTaskName(raw, null) : null;
+  }
+
+  // Fallback: no prompt extracted, use the scrollback start
+  const prompt = `You are reading the beginning of an AI coding agent session (Claude Code, Codex, or similar).
+Find the FIRST instruction the user gave and generate a 2-4 word task name from it.
+
+Rules:
+- Use the actual keywords from the user's prompt
+- Do NOT use generic terms (no "code review", "terminal session")
+- Do NOT repeat the project name "${projectDir}"
+- lowercase, no quotes
+
+Session start:
 ${startOutput.slice(0, 4000)}
 
 Reply with ONLY the task name.`;
