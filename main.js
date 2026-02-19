@@ -547,6 +547,21 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
   return { ok: true };
 });
 
+ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath, weztermTabId) => {
+  if (!sessionName || !claudeSessionId) return { ok: false, error: 'missing sessionName or claudeSessionId' };
+  const cwd = panePath || os.homedir();
+  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', cwd]);
+  if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+  // Send the fork command to the new window's shell
+  await runFile('tmux', ['send-keys', '-t', sessionName, `claude --resume ${claudeSessionId} --fork-session`, 'Enter']);
+  // Focus WezTerm tab and bring to front
+  if (weztermTabId && weztermBin) {
+    await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
+  }
+  await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
+  return { ok: true };
+});
+
 ipcMain.handle('kill-session', async (_e, sessionName) => {
   if (!sessionName) return { ok: false, error: 'missing sessionName' };
   const r = await runFile('tmux', ['kill-session', '-t', sessionName]);

@@ -14,6 +14,7 @@ const HELM_DIR = path.join(HOME, '.helm');
 const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
 const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
 const PANE_TASKS_FILE = path.join(HELM_DIR, 'pane-tasks.json');
+const PANE_CLAUDE_SESSIONS_FILE = path.join(HELM_DIR, 'pane-claude-sessions.json');
 
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
 const IDLE_SHELLS = new Set(['bash', 'zsh', 'fish']);
@@ -59,6 +60,7 @@ const paneTaskNames = new Map();    // paneId → AI-generated short task name
 const paneTaskInitialized = new Set(); // panes that already got an initial name
 const paneWaitSummaries = new Map();   // paneId → AI-generated context summary when waiting
 const hookWaitingOverride = new Map(); // paneId → { timestamp, cwd, sessionId }
+const paneClaudeSessionIds = new Map(); // paneId → Claude Code session UUID (persisted)
 const HOOK_TTL_MS = 30000; // 30s TTL for hook overrides
 let cachedState = { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
@@ -108,6 +110,32 @@ function savePaneTasks() {
   const obj = {};
   for (const [k, v] of paneTaskNames) obj[k] = v;
   writeJson(PANE_TASKS_FILE, obj);
+}
+
+function loadPaneClaudeSessions() {
+  const data = readJson(PANE_CLAUDE_SESSIONS_FILE);
+  for (const [k, v] of Object.entries(data)) paneClaudeSessionIds.set(k, v);
+}
+
+function savePaneClaudeSessions() {
+  const obj = {};
+  for (const [k, v] of paneClaudeSessionIds) obj[k] = v;
+  writeJson(PANE_CLAUDE_SESSIONS_FILE, obj);
+}
+
+// Fallback: resolve Claude Code session ID from filesystem when hook hasn't provided it
+function resolveClaudeSessionFromFs(panePath) {
+  if (!panePath) return null;
+  const encoded = panePath.replace(/\//g, '-');
+  const dir = path.join(HOME, '.claude', 'projects', encoded);
+  try {
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.jsonl') && /^[0-9a-f]{8}-/.test(f))
+      .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length) return files[0].name.replace('.jsonl', '');
+  } catch {}
+  return null;
 }
 
 // ── WezTerm binary detection ──────────────────────────────────────────────
@@ -644,7 +672,8 @@ async function buildState() {
       waitingSince: st.waitingSince,
       waitingSummary: st.status === 'waiting' ? (paneWaitSummaries.get(pane.paneId) || null) : null,
       interactionStartedAt: interactionStart.get(pane.paneId) || null,
-      panePath: pane.panePath
+      panePath: pane.panePath,
+      claudeSessionId: paneClaudeSessionIds.get(pane.paneId) || resolveClaudeSessionFromFs(pane.panePath)
     });
   }
 
@@ -729,7 +758,8 @@ http.createServer(async (req, res) => {
 
         const prevStatus = prevPaneStatus.get(paneId);
         hookWaitingOverride.set(paneId, { timestamp: Date.now(), cwd: cwd || '', sessionId: sessionId || '' });
-        console.log(`[helm] hook-stop: pane=${paneId} prev=${prevStatus || 'unknown'}`);
+        if (sessionId) { paneClaudeSessionIds.set(paneId, sessionId); savePaneClaudeSessions(); }
+        console.log(`[helm] hook-stop: pane=${paneId} prev=${prevStatus || 'unknown'} sessionId=${sessionId || '(none)'}`);
 
         // If transitioning running→waiting, generate wait summary (fire-and-forget)
         if (prevStatus === 'running') {
@@ -860,6 +890,7 @@ console.log('Debug endpoint: http://127.0.0.1:7374/debug');
 
 ensureFiles();
 loadPaneTasks();
+loadPaneClaudeSessions();
 // Use setTimeout loop (not setInterval) to prevent tick overlap when tick takes >POLL_MS
 (async function tickLoop() {
   await tick();

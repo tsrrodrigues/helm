@@ -171,6 +171,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'R' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     manualRenameAgent();
+  } else if (e.key === 'f' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    forkSelectedAgent();
   } else if (e.key === 'n' && state.shortcutMode && state.selectedPane && state.open) {
     e.preventDefault();
     createWindowForSelected();
@@ -727,6 +730,19 @@ async function createWindowForSelected() {
   if (!result.ok) console.error('[helm] create-window failed:', result.error);
 }
 
+async function forkSelectedAgent() {
+  if (!state.selectedPane) return;
+  // Re-read agent from current state (selectedPane may be a stale snapshot)
+  const front = state.data.fronts.find(f => f.agents.some(a => a.paneId === state.selectedPane.paneId));
+  if (!front) return;
+  const agent = front.agents.find(a => a.paneId === state.selectedPane.paneId);
+  if (!agent || !agent.claudeSessionId) return;
+  togglePanel(false);
+  window.helm.blurWindow();
+  const result = await window.helm.forkSession(front.sessionName, agent.claudeSessionId, agent.panePath, front.weztermTabId);
+  if (!result.ok) console.error('[helm] fork-session failed:', result.error);
+}
+
 async function executeDelete() {
   if (!state.confirmingDelete) return;
   const { paneId, sessionName, type } = state.confirmingDelete;
@@ -795,7 +811,7 @@ function render() {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
-      setText(hint, 'j/k navegar · Enter ir · x dispensar · r/R renomear · v nvim · n window · d/D deletar · N sessão');
+      setText(hint, 'j/k navegar · Enter ir · x dispensar · r/R renomear · f fork · v nvim · n window · d/D deletar · N sessão');
     }
   }
 
