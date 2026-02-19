@@ -192,7 +192,7 @@ $('add-session-btn').addEventListener('click', (e) => {
   startCreateSession();
 });
 
-window.helm.onShortcutFired(() => {
+window.helm.onShortcutFired((freshPane) => {
   if (state.open) {
     // Toggle: close + blur
     togglePanel(false);
@@ -201,7 +201,7 @@ window.helm.onShortcutFired(() => {
   }
   state.shortcutMode = true;
   togglePanel(true);
-  preselectAgent();
+  preselectAgent(freshPane);
   render();
 });
 
@@ -460,9 +460,15 @@ function getNavigableAgents() {
   return list;
 }
 
-function preselectAgent() {
+function preselectAgent(freshPane) {
   const agents = getNavigableAgents();
   if (!agents.length) { state.selectedPane = null; return; }
+
+  // Top priority: fresh pane ID from tmux (queried at shortcut time, always accurate)
+  if (freshPane) {
+    const freshMatch = agents.find(a => a.paneId === freshPane);
+    if (freshMatch) { state.selectedPane = freshMatch; ensureSelectedVisible(); return; }
+  }
 
   const activeSession = state.data?.activeSessionName;
   const activeAgents = activeSession ? agents.filter(a => a.sessionName === activeSession) : [];
@@ -478,10 +484,10 @@ function preselectAgent() {
   const activeWaiting = activeAgents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
   if (activeWaiting) { state.selectedPane = activeWaiting; ensureSelectedVisible(); return; }
 
-  // Fallback: the currently active pane (if it's an agent in this session)
-  const activePaneId = state.data?.activePane;
-  if (activePaneId && activeAgents.length) {
-    const activeMatch = activeAgents.find(a => a.paneId === activePaneId);
+  // Fallback: the active window's pane in this session (from daemon's cached state)
+  const activeFront = state.data?.fronts?.find(f => f.sessionName === activeSession);
+  if (activeFront?.activePaneId && activeAgents.length) {
+    const activeMatch = activeAgents.find(a => a.paneId === activeFront.activePaneId);
     if (activeMatch) { state.selectedPane = activeMatch; ensureSelectedVisible(); return; }
   }
 

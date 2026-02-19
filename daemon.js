@@ -202,7 +202,7 @@ async function listTmuxPanes() {
     .filter(Boolean)
     .map((line) => {
       const [sessionName, windowName, paneId, command, panePid, paneTitle, panePath, sessionAttached, windowActive, paneActive] = line.split('\t');
-      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '', isActive: sessionAttached === '1' && windowActive === '1' && paneActive === '1' };
+      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '', isActive: sessionAttached === '1' && windowActive === '1' && paneActive === '1', isWindowActive: windowActive === '1' && paneActive === '1' };
     })
     .filter((p) => p.paneId && p.sessionName);
 }
@@ -575,9 +575,15 @@ async function buildState() {
         sessionName: pane.sessionName,
         weztermTabId: tabMap[pane.sessionName] || null,
         aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName && !confirmed[pane.sessionName]),
+        activePaneId: null,
         agents: [],
         editorPanes: []
       });
+    }
+
+    // Track the active pane for this session (deterministic: each session always has one)
+    if (pane.isWindowActive) {
+      frontsMap.get(pane.sessionName).activePaneId = pane.paneId;
     }
 
     // Track editor panes (vim/nvim) separately — not as agents

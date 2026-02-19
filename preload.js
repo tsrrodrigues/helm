@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('helm', {
   moveWindow: (dx, dy) => ipcRenderer.send('move-window', dx, dy),
   savePillPosition: (x, y) => ipcRenderer.send('save-pill-position', x, y),
   getPillPosition: () => ipcRenderer.invoke('get-pill-position'),
-  onShortcutFired: (cb) => ipcRenderer.on('shortcut-fired', cb),
+  onShortcutFired: (cb) => ipcRenderer.on('shortcut-fired', (_event, freshPane) => cb(freshPane)),
   onStateUpdate: (cb) => ipcRenderer.on('state-update', (_event, state) => cb(state)),
   refocusPreviousApp: () => ipcRenderer.send('refocus-previous-app'),
   blurWindow: () => ipcRenderer.send('blur-window'),

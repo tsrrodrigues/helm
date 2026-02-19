@@ -328,11 +328,14 @@ app.whenReady().then(() => {
   connectDaemon();
   if (process.env.HELM_DEV) watchRenderer();
   startOverlayTracking();
-  globalShortcut.register('Control+H', () => {
+  globalShortcut.register('Control+H', async () => {
     if (win && !win.isDestroyed()) {
+      // Query tmux for the active pane RIGHT NOW, before focus changes
+      const { stdout } = await runFile('tmux', ['display-message', '-p', '#{pane_id}'], true);
+      const freshPane = (stdout || '').trim() || null;
       win.setFocusable(true);
       win.focus();
-      win.webContents.send('shortcut-fired');
+      win.webContents.send('shortcut-fired', freshPane);
     }
   });
 });
