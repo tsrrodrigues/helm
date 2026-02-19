@@ -129,7 +129,7 @@ function startOverlayTracking() {
         if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
       }
     }
-  }, 50);
+  }, 500);
 
   // Slow poll: active app detection (500ms — uses osascript, heavier)
   setInterval(async () => {
@@ -144,7 +144,7 @@ function startOverlayTracking() {
         win.webContents.send('active-app-changed', { appId, isTerminal });
       }
     }
-  }, 500);
+  }, 2000);
 }
 
 // ── Pill position persistence ─────────────────────────────────────────────
@@ -243,11 +243,6 @@ function createWindow() {
   });
 
 
-  // Periodic re-assert every 2s — ensures overlay survives workspace switches
-  setInterval(() => {
-    if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
-  }, 2000);
-
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
   win.once('ready-to-show', () => {
@@ -297,12 +292,18 @@ function watchRenderer() {
 // ── App bootstrap ─────────────────────────────────────────────────────────
 app.setName('Helm');
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  console.log('[helm] Another instance is already running, quitting.');
+  app.quit();
+}
+
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide(); // accessory app — never steals focus
   ensureDir();
   createWindow();
   connectDaemon();
-  watchRenderer();
+  if (process.env.HELM_DEV) watchRenderer();
   startOverlayTracking();
   globalShortcut.register('Control+H', () => {
     if (win && !win.isDestroyed()) {

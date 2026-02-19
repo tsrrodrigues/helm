@@ -78,12 +78,31 @@ function waitForPort(port, maxMs = 5000) {
   });
 }
 
+// ── Guard: single instance ────────────────────────────────────────────────
+
+function isPortInUse(port) {
+  return new Promise((resolve) => {
+    const sock = net.createConnection({ port, host: '127.0.0.1' }, () => {
+      sock.destroy();
+      resolve(true);
+    });
+    sock.on('error', () => resolve(false));
+  });
+}
+
 // ── Bootstrap ────────────────────────────────────────────────────────────
 
-spawnDaemon();
+isPortInUse(7373).then((inUse) => {
+  if (inUse) {
+    console.log('[helm] another instance already running (port 7373 in use), exiting.');
+    process.exit(0);
+  }
 
-waitForPort(7373).then((ok) => {
-  if (!ok) console.warn('[helm] daemon not ready after 5s, starting Electron anyway');
-  launchElectron();
-  watchFiles();
+  spawnDaemon();
+
+  waitForPort(7373).then((ok) => {
+    if (!ok) console.warn('[helm] daemon not ready after 5s, starting Electron anyway');
+    launchElectron();
+    watchFiles();
+  });
 });

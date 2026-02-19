@@ -5,7 +5,7 @@ const path = require('path');
 const WebSocket = require('ws');
 
 const PORT = 7373;
-const POLL_MS = 2000;
+const POLL_MS = 5000;
 const WAIT_WITH_PROMPT_MS = 3000;   // stable + recognized prompt → waiting
 const WAIT_NO_PROMPT_MS = 8000;     // stable + no prompt → waiting (fallback)
 
@@ -528,7 +528,9 @@ async function buildState() {
 
   const frontsMap = new Map();
   for (const pane of panes) {
-    const output = await capturePane(pane.paneId);
+    // Skip capturePane for idle shells — no useful output to capture
+    const isIdleShell = IDLE_SHELLS.has((pane.command || '').toLowerCase());
+    const output = isIdleShell ? '' : await capturePane(pane.paneId);
     const info = agentInfo.get(pane.paneId);
     const hasActiveChildren = info ? info.hasActiveChildren : undefined;
     const st = statusForPane(pane, output, now, hasActiveChildren);
