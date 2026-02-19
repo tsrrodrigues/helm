@@ -445,7 +445,9 @@ async function suggestPaneTask(paneId, output, panePath) {
 User's instruction: "${userPrompt}"
 
 Rules:
-- Use the KEY WORDS from the instruction (e.g. "fix auth bug", "agent name logic", "pill close behavior")
+- Extract KEY WORDS directly from the instruction — the name must contain words the user actually wrote
+- Keep the SAME LANGUAGE as the instruction (if Portuguese, name in Portuguese; if English, name in English)
+- Do NOT translate, do NOT rephrase into English
 - Do NOT repeat the project name "${projectDir}"
 - lowercase, no quotes
 - 2-4 words only
@@ -460,7 +462,9 @@ Reply with ONLY the task name.`;
 Find the FIRST instruction the user gave and generate a 2-4 word task name from it.
 
 Rules:
-- Use the actual keywords from the user's prompt
+- Extract KEY WORDS directly from the user's prompt — the name must contain words the user actually wrote
+- Keep the SAME LANGUAGE as the user's instruction (if Portuguese, name in Portuguese; if English, name in English)
+- Do NOT translate, do NOT rephrase into English
 - Do NOT use generic terms (no "code review", "terminal session")
 - Do NOT repeat the project name "${projectDir}"
 - lowercase, no quotes
@@ -751,7 +755,10 @@ console.log('Debug endpoint: http://127.0.0.1:7374/debug');
 
 ensureFiles();
 loadPaneTasks();
-setInterval(tick, POLL_MS);
-tick();
+// Use setTimeout loop (not setInterval) to prevent tick overlap when tick takes >POLL_MS
+(async function tickLoop() {
+  await tick();
+  setTimeout(tickLoop, POLL_MS);
+})();
 
 console.log(`Helm daemon running on ws://localhost:${PORT}`);

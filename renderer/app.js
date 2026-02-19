@@ -300,7 +300,10 @@ function togglePanel(force) {
   if (wantOpen === state.open || _animating) return;
 
   if (wantOpen) {
-    // ── OPEN — pure CSS, no window resize ──
+    // ── OPEN — expand window, then fade in panel ──
+    const layout = window.helm.expandToPanel();
+    if (layout) { state.layout = layout; applyLayout(); }
+
     state.open = true;
     panel.classList.remove('closing', 'visible');
 
@@ -321,7 +324,7 @@ function togglePanel(force) {
       panel.classList.add('visible');
     });
   } else {
-    // ── CLOSE — pure CSS, no window resize ──
+    // ── CLOSE — fade out panel, then collapse window ──
     _animating = true;
     panel.classList.remove('visible');
     panel.classList.add('closing');
@@ -338,6 +341,10 @@ function togglePanel(force) {
       state.creatingSession = false;
       state.confirmingDelete = null;
       render();
+
+      // Collapse window to pill size — reduces GPU/WindowServer compositing area ~95%
+      const layout = window.helm.collapseToPill();
+      if (layout) { state.layout = layout; applyLayout(); }
     };
 
     panel.addEventListener('transitionend', function onEnd(e) {
@@ -1236,3 +1243,14 @@ function renderFocusCard() {
   card.querySelector('.fc-dismiss').addEventListener('click', (e) => { e.stopPropagation(); focusDismiss(); });
   card.querySelector('.fc-all').addEventListener('click', (e) => { e.stopPropagation(); exitFocusMode(); });
 }
+
+// ── Discrete blink for waiting dots (no CSS animation = no 60fps GPU compositing) ──
+// Toggles opacity every 1.5s — causes exactly 1 repaint per toggle instead of continuous
+let _blinkOn = true;
+setInterval(() => {
+  _blinkOn = !_blinkOn;
+  const opacity = _blinkOn ? '1' : '0.3';
+  for (const dot of document.querySelectorAll('.pdot.wait, .fas-dot.wait, .ar-dot.wait')) {
+    dot.style.opacity = opacity;
+  }
+}, 1500);

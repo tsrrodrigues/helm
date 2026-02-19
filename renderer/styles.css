@@ -24,8 +24,6 @@ html, body {
   background: rgba(12, 12, 22, 0.96);
   border: 1px solid rgba(255, 165, 2, 0.3);
   border-radius: 24px;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,165,2,0.06);
   cursor: pointer !important;
   display: flex;
@@ -39,12 +37,12 @@ html, body {
 .pill:hover { border-color: rgba(255, 165, 2, 0.5); }
 
 .pill.has-waiting {
-  animation: pill-glow 2.5s ease-in-out infinite;
+  border-color: rgba(255, 165, 2, 0.55);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 8px rgba(255,165,2,0.15), 0 0 0 1px rgba(255,165,2,0.1);
 }
 
 .pill.pill-nudge {
-  animation: pill-bounce 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both,
-             pill-glow 2.5s ease-in-out infinite;
+  animation: pill-bounce 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 .pill.all-ok {
@@ -55,8 +53,8 @@ html, body {
 
 .pdots { display: flex; gap: 6px; align-items: center; }
 .pdot  { width: 9px; height: 9px; border-radius: 50%; }
-.pdot.run  { background: #2ed573; box-shadow: 0 0 6px rgba(46,213,115,.55); animation: blink 2s ease-in-out infinite; }
-.pdot.wait { background: #ffa502; box-shadow: 0 0 7px rgba(255,165,2,.65); animation: pw 1.3s ease-in-out infinite; }
+.pdot.run  { background: #2ed573; box-shadow: 0 0 6px rgba(46,213,115,.55); }
+.pdot.wait { background: #ffa502; box-shadow: 0 0 7px rgba(255,165,2,.65); }
 
 .pdiv { width: 1px; height: 17px; background: rgba(255,255,255,0.1); }
 
@@ -70,8 +68,6 @@ html, body {
   background: rgba(10, 10, 20, 0.97);
   border: 1px solid rgba(255,255,255,0.09);
   border-radius: 18px;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   box-shadow: 0 16px 48px rgba(0,0,0,0.7);
   padding: 16px 16px 14px;
 
@@ -239,8 +235,8 @@ html, body {
   padding-left: 23px;
 }
 .fas-dot { width: 7px; height: 7px; border-radius: 50%; }
-.fas-dot.run  { background: #2ed573; animation: blink 2s infinite; }
-.fas-dot.wait { background: #ffa502; animation: pw 1.3s infinite; }
+.fas-dot.run  { background: #2ed573; }
+.fas-dot.wait { background: #ffa502; }
 .fas-count { font-size: 12px; color: #555; }
 .fas-count.alert { color: #8a5a10; font-weight: 600; }
 
@@ -288,8 +284,8 @@ html, body {
 }
 
 .ar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
-.ar-dot.run  { background: #2ed573; animation: blink 2s infinite; }
-.ar-dot.wait { background: #ffa502; animation: pw 1.3s infinite; }
+.ar-dot.run  { background: #2ed573; }
+.ar-dot.wait { background: #ffa502; }
 
 .ar-body { flex: 1; min-width: 0; }
 .ar-top  { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
@@ -339,7 +335,7 @@ html, body {
 /* Dismissed waiting — visually muted */
 .agent-row.is-dismissed { background: transparent; }
 .agent-row.is-dismissed:hover { background: rgba(255,255,255,.03); }
-.agent-row.is-dismissed .ar-dot { background: #555; box-shadow: none; animation: none; }
+.agent-row.is-dismissed .ar-dot { background: #555; box-shadow: none; }
 
 .ar-nav {
   font-size: 13px;
@@ -588,18 +584,6 @@ html, body {
 .fc-btn.fc-go:hover { background: rgba(108,99,255,.15); color: #8c85ff; }
 
 /* Animations */
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-@keyframes pw    { 0%,100%{transform:scale(1)} 50%{transform:scale(1.6)} }
-@keyframes pill-glow {
-  0%,100% {
-    border-color: rgba(255, 165, 2, 0.3);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,165,2,0.06);
-  }
-  50% {
-    border-color: rgba(255, 165, 2, 0.7);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 12px rgba(255,165,2,0.25), 0 0 0 1px rgba(255,165,2,0.15);
-  }
-}
 @keyframes pill-bounce {
   0%   { transform: translateY(0); }
   30%  { transform: translateY(-3px); }

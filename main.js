@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 let win;
 let daemonSocket;
 let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
+let isExpanded = false;
 
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
@@ -210,14 +211,15 @@ function computeExpandedBounds(pillX, pillY) {
 
 function createWindow() {
   const pos = loadPillPosition();
-  const { winBounds, layout } = computeExpandedBounds(pos.x, pos.y);
-  currentLayout = layout;
+  // Start collapsed at pill size — minimal GPU/WindowServer compositing
+  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+  isExpanded = false;
 
   win = new BrowserWindow({
-    width: winBounds.width,
-    height: winBounds.height,
-    x: winBounds.x,
-    y: winBounds.y,
+    width: PILL_W,
+    height: PILL_H,
+    x: pos.x,
+    y: pos.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -327,8 +329,29 @@ ipcMain.on('get-layout', (e) => {
   e.returnValue = currentLayout;
 });
 
-// Recalculate bounds after drag — resizes window, returns new layout
+// Recalculate bounds after drag — handles both collapsed and expanded states
 ipcMain.on('recalculate-bounds', (e) => {
+  if (!win || win.isDestroyed()) { e.returnValue = null; return; }
+
+  const [wx, wy] = win.getPosition();
+  const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
+  const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
+
+  if (!isExpanded) {
+    // Collapsed: just keep pill-sized window at current position
+    currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+    e.returnValue = currentLayout;
+    return;
+  }
+
+  const { winBounds, layout } = computeExpandedBounds(pillX, pillY);
+  currentLayout = layout;
+  win.setBounds(winBounds, false);
+  e.returnValue = layout;
+});
+
+// Expand window to panel size (called when panel opens)
+ipcMain.on('expand-to-panel', (e) => {
   if (!win || win.isDestroyed()) { e.returnValue = null; return; }
 
   const [wx, wy] = win.getPosition();
@@ -337,9 +360,25 @@ ipcMain.on('recalculate-bounds', (e) => {
 
   const { winBounds, layout } = computeExpandedBounds(pillX, pillY);
   currentLayout = layout;
+  isExpanded = true;
 
   win.setBounds(winBounds, false);
   e.returnValue = layout;
+});
+
+// Collapse window to pill size (called when panel closes)
+ipcMain.on('collapse-to-pill', (e) => {
+  if (!win || win.isDestroyed()) { e.returnValue = null; return; }
+
+  const [wx, wy] = win.getPosition();
+  const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
+  const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
+
+  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+  isExpanded = false;
+
+  win.setBounds({ x: pillX, y: pillY, width: PILL_W, height: PILL_H }, false);
+  e.returnValue = currentLayout;
 });
 
 ipcMain.on('move-window', (_e, dx, dy) => {
