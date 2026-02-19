@@ -4,6 +4,8 @@ const state = {
   selectedPane: null,
   inlineEditSession: null,
   shortcutMode: false,
+  focusMode: false,   // true = showing single-agent focus card instead of full panel
+  focusAgent: null,    // { agent, front } for focus mode
   frontOrder: [],
   openFronts: new Set(),
   dismissedPanes: new Set(),
@@ -109,6 +111,15 @@ document.addEventListener('keydown', (e) => {
   if (state.creatingSession) {
     if (e.key === 'Escape') { e.preventDefault(); cancelCreateSession(); }
     return; // let input handle Enter etc.
+  }
+
+  // Handle focus mode keys
+  if (state.focusMode && state.open) {
+    if (e.key === 'Enter') { e.preventDefault(); focusNavigate(); }
+    else if (e.key === 'x') { e.preventDefault(); focusDismiss(); }
+    else if (e.key === 'Tab') { e.preventDefault(); exitFocusMode(); }
+    else if (e.key === 'Escape') { e.preventDefault(); togglePanel(false); if (state.shortcutMode) window.helm.blurWindow(); }
+    return;
   }
 
   // Handle delete confirmation
@@ -285,7 +296,17 @@ function togglePanel(force) {
     // ── OPEN — pure CSS, no window resize ──
     state.open = true;
     panel.classList.remove('closing', 'visible');
-    for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
+
+    // Check for undismissed waiting agents → enter focus mode
+    const focusTarget = getOldestUndismissedWaiting();
+    if (focusTarget) {
+      state.focusMode = true;
+      state.focusAgent = focusTarget;
+    } else {
+      state.focusMode = false;
+      state.focusAgent = null;
+      for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
+    }
     render();
 
     // Fade in panel on next frame
@@ -304,6 +325,8 @@ function togglePanel(force) {
       _animating = false;
       state.open = false;
       state.shortcutMode = false;
+      state.focusMode = false;
+      state.focusAgent = null;
       state.selectedPane = null;
       state.creatingSession = false;
       state.confirmingDelete = null;
@@ -352,6 +375,63 @@ function setText(el, text) { if (el && el.textContent !== text) el.textContent =
 
 function escapeHtml(text) {
   return String(text || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+// Simple hash → accent index (0-5), deterministic per project name
+function projectColor(name) {
+  if (!name) return 0;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return ((h % 6) + 6) % 6; // always positive 0-5
+}
+
+// ── Focus mode helpers ──────────────────────────────────────────────────
+
+function getOldestUndismissedWaiting() {
+  let oldest = null;
+  let oldestFront = null;
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) {
+        if (!oldest || (a.waitingSince && (!oldest.waitingSince || a.waitingSince < oldest.waitingSince))) {
+          oldest = a;
+          oldestFront = f;
+        }
+      }
+    }
+  }
+  if (!oldest) return null;
+  return { agent: oldest, front: oldestFront };
+}
+
+function exitFocusMode() {
+  state.focusMode = false;
+  state.focusAgent = null;
+  for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
+  render();
+}
+
+function focusDismiss() {
+  if (!state.focusAgent) return;
+  state.dismissedPanes.add(state.focusAgent.agent.paneId);
+  // Try next waiting
+  const next = getOldestUndismissedWaiting();
+  if (next) {
+    state.focusAgent = next;
+  } else {
+    exitFocusMode();
+    return;
+  }
+  render();
+}
+
+function focusNavigate() {
+  if (!state.focusAgent) return;
+  const { agent, front } = state.focusAgent;
+  state.dismissedPanes.add(agent.paneId);
+  window.helm.navigateToPane(front.sessionName, agent.windowName, agent.paneId, front.weztermTabId);
+  togglePanel(false);
+  window.helm.blurWindow();
 }
 
 // ── Keyboard navigation helpers ───────────────────────────────────────
@@ -540,7 +620,7 @@ function render() {
     }
   }
 
-  setText($('pill-text'), effectiveWaiting > 0 ? `${effectiveWaiting} aguardando` : 'tudo rodando');
+  setText($('pill-text'), effectiveWaiting > 0 ? String(effectiveWaiting) : '');
 
   const wasNudge = pill.classList.contains('pill-nudge');
   pill.className = effectiveWaiting > 0 ? 'pill has-waiting' : 'pill all-ok';
@@ -559,14 +639,30 @@ function render() {
   setText($('sum-waiting'), String(effectiveWaiting));
 
   const hint = $('shortcut-hint');
-  hint.hidden = !state.shortcutMode;
-  if (state.shortcutMode) {
+  hint.hidden = !state.shortcutMode && !state.focusMode;
+  if (state.focusMode) {
+    setText(hint, 'Enter ir · x dispensar · Tab ver tudo · Esc fechar');
+  } else if (state.shortcutMode) {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
       setText(hint, 'j/k navegar · Enter ir · x dispensar · n window · d/D deletar · N sessão');
     }
   }
+
+  // Focus mode: show single-agent focus card
+  if (state.focusMode && state.focusAgent) {
+    renderFocusCard();
+    return;
+  }
+
+  // Normal mode: hide focus card, show fronts
+  const existingFocus = $('focus-card');
+  if (existingFocus) existingFocus.remove();
+  frontsEl.style.display = '';
+  $('create-area').style.display = '';
+  document.querySelector('.pf').style.display = '';
+  document.querySelector('.ph').style.display = '';
 
   reconcileFronts();
   renderCreateArea();
@@ -634,8 +730,9 @@ function createFrontEl(front) {
 
   const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
+  const accentIdx = projectColor(front.projectDir);
 
-  el.className = frontClasses(effectiveWait) + (state.openFronts.has(front.sessionName) ? ' open' : '');
+  el.className = frontClasses(effectiveWait, accentIdx) + (state.openFronts.has(front.sessionName) ? ' open' : '');
 
   el.innerHTML = `
     <div class="front-head">
@@ -645,6 +742,7 @@ function createFrontEl(front) {
         ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
         <button class="name-btn" data-action="edit">editar</button>
       </div>
+      ${front.projectDir ? `<div class="project-name">${escapeHtml(front.projectDir)}</div>` : ''}
       <div class="fagents-summary">
         ${effectiveWait ? '<div class="fas-dot wait"></div>' : ''}
         ${run  ? '<div class="fas-dot run"></div>' : ''}
@@ -664,8 +762,23 @@ function patchFrontEl(el, front) {
   const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
   const run  = front.agents.filter(a => a.status === 'running').length;
   const isOpen = state.openFronts.has(front.sessionName);
+  const accentIdx = projectColor(front.projectDir);
 
-  el.className = frontClasses(effectiveWait) + (isOpen ? ' open' : '');
+  el.className = frontClasses(effectiveWait, accentIdx) + (isOpen ? ' open' : '');
+
+  // Update project name
+  let projEl = el.querySelector('.project-name');
+  if (front.projectDir) {
+    if (!projEl) {
+      projEl = document.createElement('div');
+      projEl.className = 'project-name';
+      const fhRow = el.querySelector('.fh-row');
+      if (fhRow) fhRow.parentNode.insertBefore(projEl, fhRow.nextSibling);
+    }
+    setText(projEl, front.projectDir);
+  } else if (projEl) {
+    projEl.remove();
+  }
 
   // Summary
   const fasCount = el.querySelector('.fas-count');
@@ -705,8 +818,8 @@ function patchFrontEl(el, front) {
   reconcileAgentRows(el.querySelector('.agents'), front);
 }
 
-function frontClasses(effectiveWaitCount) {
-  return `front ${effectiveWaitCount > 0 ? 'has-wait' : 'all-run'}`;
+function frontClasses(effectiveWaitCount, accentIdx) {
+  return `front ${effectiveWaitCount > 0 ? 'has-wait' : 'all-run'} accent-${accentIdx ?? 0}`;
 }
 
 // ── Front events (attached once) ──────────────────────────────────────────
@@ -1000,4 +1113,49 @@ function patchAgentRow(row, agent, front) {
   } else if (numEl) {
     numEl.remove();
   }
+}
+
+// ── Focus card renderer ────────────────────────────────────────────────────
+
+function renderFocusCard() {
+  // Hide normal panel content
+  frontsEl.style.display = 'none';
+  $('create-area').style.display = 'none';
+  document.querySelector('.pf').style.display = 'none';
+  document.querySelector('.ph').style.display = 'none';
+
+  const { agent, front } = state.focusAgent;
+  const accentIdx = projectColor(front.projectDir);
+  const tag = agentTag(agent.command);
+  const elapsed = formatElapsed(agent.waitingSince);
+  const summary = agent.waitingSummary || '';
+  const lastLine = agent.lastOutput || '';
+
+  let card = $('focus-card');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'focus-card';
+    panel.insertBefore(card, frontsEl);
+  }
+
+  card.className = `focus-card accent-${accentIdx}`;
+  card.innerHTML = `
+    <div class="fc-header">
+      <div class="fc-project">${escapeHtml(front.projectDir || front.sessionName)}</div>
+      <div class="fc-elapsed">${elapsed ? `esperando ${escapeHtml(elapsed)}` : 'aguardando'}</div>
+    </div>
+    <div class="fc-task">${escapeHtml(agent.task || agent.windowName)}</div>
+    <div class="fc-agent">${escapeHtml(tag)}</div>
+    ${summary ? `<div class="fc-summary">${escapeHtml(summary)}</div>` : ''}
+    ${lastLine ? `<div class="fc-prompt">${escapeHtml(lastLine)}</div>` : ''}
+    <div class="fc-actions">
+      <button class="fc-btn fc-go">Enter ir</button>
+      <button class="fc-btn fc-dismiss">x dispensar</button>
+      <button class="fc-btn fc-all">Tab ver tudo</button>
+    </div>
+  `;
+
+  card.querySelector('.fc-go').addEventListener('click', (e) => { e.stopPropagation(); focusNavigate(); });
+  card.querySelector('.fc-dismiss').addEventListener('click', (e) => { e.stopPropagation(); focusDismiss(); });
+  card.querySelector('.fc-all').addEventListener('click', (e) => { e.stopPropagation(); exitFocusMode(); });
 }

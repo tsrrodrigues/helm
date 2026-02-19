@@ -55,12 +55,9 @@ const paneMemory = new Map();
 const aiSuggestedSessions = new Set();
 const prevPaneStatus = new Map();   // paneId → 'running' | 'waiting' | 'idle'
 const interactionStart = new Map(); // paneId → timestamp (start of current interaction)
-const lastRenameAt = new Map();     // sessionName → timestamp
-const RENAME_COOLDOWN_MS = 30000;
 const paneTaskNames = new Map();    // paneId → AI-generated short task name
-const lastTaskRenameAt = new Map(); // paneId → timestamp
-const TASK_RENAME_COOLDOWN_MS = 30000;
 const paneTaskInitialized = new Set(); // panes that already got an initial name
+const paneWaitSummaries = new Map();   // paneId → AI-generated context summary when waiting
 let cachedState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
 
@@ -89,9 +86,20 @@ function writeConfirmed(sessionName) {
   writeJson(CONFIRMED_FILE, c);
 }
 
+const PANE_TASKS_VERSION = 2; // bump to force regeneration of all task names
+const PANE_TASKS_VERSION_FILE = path.join(HELM_DIR, 'pane-tasks-version.json');
+
 function loadPaneTasks() {
-  const data = readJson(PANE_TASKS_FILE);
-  for (const [k, v] of Object.entries(data)) paneTaskNames.set(k, v);
+  const versionData = readJson(PANE_TASKS_VERSION_FILE);
+  if (versionData.version === PANE_TASKS_VERSION) {
+    const data = readJson(PANE_TASKS_FILE);
+    for (const [k, v] of Object.entries(data)) paneTaskNames.set(k, v);
+  } else {
+    // Version mismatch: clear old names so they regenerate with current prompt
+    console.log('[helm] pane-tasks version changed, regenerating all task names');
+    writeJson(PANE_TASKS_FILE, {});
+    writeJson(PANE_TASKS_VERSION_FILE, { version: PANE_TASKS_VERSION });
+  }
 }
 
 function savePaneTasks() {
@@ -336,7 +344,7 @@ const CLAUDE_BIN = '/Users/tiagorodrigues/.local/bin/claude';
 function cleanTaskName(raw, fallback) {
   const text = String(raw || '').replace(/[\r\n]+/g, ' ').trim();
   if (!text) return fallback;
-  return text.replace(/^['"`]|['"`]$/g, '').slice(0, 40);
+  return text.replace(/^['"`]|['"`]$/g, '').slice(0, 40).toLowerCase();
 }
 
 function askClaude(prompt) {
@@ -365,20 +373,49 @@ async function suggestName(sessionName, panePath, command) {
   return cleanTaskName(raw, sessionName);
 }
 
-async function suggestNameFromOutput(sessionName, output, status) {
+async function suggestPaneTask(paneId, output, panePath) {
   const lines = output.split('\n').filter(Boolean).slice(-20);
   const recentOutput = lines.join('\n').slice(-1500);
-  const prompt = `You name terminal sessions. Based on the output below from an AI coding agent, suggest a short name (2-4 words, title case) that describes the current task.\n\nStatus: ${status}\nRecent output:\n${recentOutput}\n\nReply with ONLY the name, nothing else.`;
-  const raw = await askClaude(prompt);
-  return cleanTaskName(raw, sessionName);
-}
+  const projectDir = panePath ? path.basename(panePath) : '(unknown)';
+  const prompt = `Give a 2-4 word fixed title for this terminal tab. The title identifies the SCOPE or AREA of work, not the current action. It should remain valid even as the agent moves between tasks.
 
-async function suggestPaneTask(paneId, output, status) {
-  const lines = output.split('\n').filter(Boolean).slice(-20);
-  const recentOutput = lines.join('\n').slice(-1500);
-  const prompt = `Summarize what this AI coding agent is doing in 3-5 words max (title case). Be specific about the action (e.g. "Fixing Auth Bug", "Adding Unit Tests", "Refactoring API Routes").\n\nStatus: ${status}\nRecent terminal output:\n${recentOutput}\n\nReply with ONLY the summary, nothing else.`;
+Rules:
+- Identify the module, feature, or subsystem: "auth middleware", "socket ipc", "overlay css", "daemon polling"
+- Do NOT describe actions (no "fixing", "adding", "refactoring", "implementing")
+- Do NOT repeat the project name "${projectDir}" — it's already shown separately
+- Lowercase, no quotes
+- Be specific: prefer "pane status detection" over "daemon"
+
+Project: ${projectDir}
+Terminal output (last 20 lines):
+${recentOutput}
+
+Reply with ONLY the title.`;
   const raw = await askClaude(prompt);
   return raw ? cleanTaskName(raw, null) : null;
+}
+
+async function generateWaitSummary(paneId, output, panePath) {
+  const lines = output.split('\n').filter(Boolean).slice(-20);
+  const recentOutput = lines.join('\n').slice(-1500);
+  const projectDir = panePath ? path.basename(panePath) : '(unknown)';
+  const prompt = `List what this AI agent did and why it stopped, as bullet keywords (no full sentences). Max 3 bullets, each 3-6 words. Use file names, function names, error names. Portuguese (BR).
+
+Format example:
+• editou daemon.js:376 prompt
+• criou generateWaitSummary()
+• aguarda: escolha de abordagem
+
+Project: ${projectDir}
+Terminal output (last 20 lines):
+${recentOutput}
+
+Reply with ONLY the bullets.`;
+  const raw = await askClaude(prompt);
+  if (raw) {
+    const summary = raw.trim().slice(0, 200);
+    paneWaitSummaries.set(paneId, summary);
+  }
 }
 
 // ── Build state ───────────────────────────────────────────────────────────
@@ -428,36 +465,16 @@ async function buildState() {
     }
     prevPaneStatus.set(pane.paneId, st.status);
     if (prevStatus && prevStatus !== st.status) {
-      // Rename session (fire-and-forget)
-      if (!confirmed[pane.sessionName]) {
-        const lastRename = lastRenameAt.get(pane.sessionName) || 0;
-        if (now - lastRename >= RENAME_COOLDOWN_MS) {
-          lastRenameAt.set(pane.sessionName, now);
-          console.log(`[helm] status change ${pane.sessionName}: ${prevStatus} → ${st.status}, renaming...`);
-          suggestNameFromOutput(pane.sessionName, output, st.status).then((suggested) => {
-            const cur = readNames();
-            const conf = readConfirmed();
-            if (!conf[pane.sessionName]) {
-              cur[pane.sessionName] = suggested;
-              writeNames(cur);
-            }
-          });
-        }
-      }
-      // Rename pane task (fire-and-forget)
-      const lastTask = lastTaskRenameAt.get(pane.paneId) || 0;
-      if (now - lastTask >= TASK_RENAME_COOLDOWN_MS) {
-        lastTaskRenameAt.set(pane.paneId, now);
-        suggestPaneTask(pane.paneId, output, st.status).then((name) => {
-          if (name) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
-        });
+      // Generate context summary when transitioning to waiting (fire-and-forget)
+      if (st.status === 'waiting') {
+        generateWaitSummary(pane.paneId, output, pane.panePath);
       }
     }
 
     // Generate initial task name for panes that don't have one yet
     if (!paneTaskNames.has(pane.paneId) && !paneTaskInitialized.has(pane.paneId) && st.status !== 'idle') {
       paneTaskInitialized.add(pane.paneId);
-      suggestPaneTask(pane.paneId, output, st.status).then((name) => {
+      suggestPaneTask(pane.paneId, output, pane.panePath).then((name) => {
         if (name) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
       });
     }
@@ -483,17 +500,31 @@ async function buildState() {
       status: st.status,
       lastOutput,
       waitingSince: st.waitingSince,
-      interactionStartedAt: interactionStart.get(pane.paneId) || null
+      waitingSummary: st.status === 'waiting' ? (paneWaitSummaries.get(pane.paneId) || null) : null,
+      interactionStartedAt: interactionStart.get(pane.paneId) || null,
+      panePath: pane.panePath
     });
   }
 
-  const fronts = [...frontsMap.values()].map(f => ({
-    ...f,
-    agents: f.agents.sort((a, b) => {
-      const rank = { waiting: 0, running: 1, idle: 2 };
-      return (rank[a.status] ?? 2) - (rank[b.status] ?? 2);
-    })
-  }));
+  const fronts = [...frontsMap.values()].map(f => {
+    // Derive projectDir from the most frequent panePath basename
+    const pathCounts = {};
+    for (const a of f.agents) {
+      if (a.panePath) {
+        const dir = path.basename(a.panePath);
+        pathCounts[dir] = (pathCounts[dir] || 0) + 1;
+      }
+    }
+    let projectDir = '';
+    let maxCount = 0;
+    for (const [dir, count] of Object.entries(pathCounts)) {
+      if (count > maxCount) { maxCount = count; projectDir = dir; }
+    }
+    return {
+      ...f,
+      projectDir
+    };
+  });
 
   const waitingAgents = fronts.flatMap(f => f.agents.map(a => ({ ...a, frontName: f.name }))).filter(a => a.status === 'waiting');
   waitingAgents.sort((a, b) => (a.waitingSince || Infinity) - (b.waitingSince || Infinity));

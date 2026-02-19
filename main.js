@@ -439,10 +439,7 @@ ipcMain.handle('create-session', async (_e, name) => {
   const safe = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   if (!safe) return { ok: false, error: 'invalid name after sanitize' };
 
-  const home = os.homedir();
-  console.error('[helm] create-session:', safe, 'cwd:', home);
-  const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', home]);
-  console.error('[helm] create-session result:', JSON.stringify(r));
+  const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', os.homedir()]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
 
   // Open in WezTerm
@@ -454,7 +451,10 @@ ipcMain.handle('create-session', async (_e, name) => {
 
 ipcMain.handle('create-window', async (_e, sessionName) => {
   if (!sessionName) return { ok: false, error: 'missing sessionName' };
-  const r = await runFile('tmux', ['new-window', '-t', sessionName]);
+  // Get the current path of the active pane in this session
+  const pathRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_current_path}'], true);
+  const cwd = pathRes.ok && pathRes.stdout ? pathRes.stdout : os.homedir();
+  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', cwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   return { ok: true };
 });
