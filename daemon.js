@@ -332,7 +332,15 @@ function statusForPane(pane, output, now, hasActiveChildren) {
   }
 
   const allLines = output.split('\n');
-  const lastLine = allLines[allLines.length - 1] || '';
+  // Find the actual last content line, skipping Claude Code status bar (⏵) and separator lines (───)
+  let lastLine = '';
+  for (let i = allLines.length - 1; i >= 0; i--) {
+    const clean = stripAnsi(allLines[i]).trim();
+    if (clean && !clean.startsWith('⏵') && !clean.startsWith('───')) {
+      lastLine = allLines[i];
+      break;
+    }
+  }
   const recentLines = allLines.slice(-4);
 
   const prev = paneMemory.get(pane.paneId);
@@ -805,7 +813,12 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
   for (const p of panes) {
     const output = await capturePane(p.paneId);
     const allLines = output.split('\n');
-    const lastLine = allLines[allLines.length - 1] || '';
+    // Find actual last content line (skip status bar and separator lines)
+    let lastLine = allLines[allLines.length - 1] || '';
+    for (let i = allLines.length - 1; i >= 0; i--) {
+      const cl = stripAnsi(allLines[i]).trim();
+      if (cl && !cl.startsWith('⏵') && !cl.startsWith('───')) { lastLine = allLines[i]; break; }
+    }
     const cleanLast = stripAnsi(lastLine).trim();
     const wait = isWaitPrompt(lastLine);
     const runInd = hasRunIndicator(allLines.slice(-4));
