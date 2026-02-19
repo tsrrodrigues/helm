@@ -6,6 +6,12 @@ const net = require('net');
 const { execFile } = require('child_process');
 const WebSocket = require('ws');
 
+// Ignore EPIPE on stdout/stderr — happens when launched via `open` and the
+// parent pipe disappears.  Without this, any console.log can crash the app.
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on?.('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+}
+
 let win;
 let daemonSocket;
 let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
