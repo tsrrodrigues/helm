@@ -167,16 +167,17 @@ function savePillPosition(x, y) {
 // ── Window ────────────────────────────────────────────────────────────────
 const PILL_W = 280;
 const PILL_H = 56;
-const PANEL_W = 990;
+const PANEL_W = 1200;
 const PANEL_H = 620;  // fixed max — content scrolls inside
 const GAP = 8;
 let currentLayout = null;
 
-function computeExpandedBounds(pillX, pillY) {
+function computeExpandedBounds(pillX, pillY, actualPillW) {
   const { workArea } = screen.getPrimaryDisplay();
+  const pillW = actualPillW || PILL_W;
 
-  // Horizontal: center panel on pill, clamp to screen
-  let px = pillX + Math.round(PILL_W / 2) - Math.round(PANEL_W / 2);
+  // Horizontal: center panel on pill's visual center, clamp to screen
+  let px = pillX + Math.round(pillW / 2) - Math.round(PANEL_W / 2);
   px = Math.max(workArea.x, Math.min(px, workArea.x + workArea.width - PANEL_W));
 
   // Vertical: prefer below pill, flip above if not enough space
@@ -375,14 +376,14 @@ ipcMain.on('recalculate-bounds', (e) => {
 });
 
 // Expand window to panel size (called when panel opens)
-ipcMain.on('expand-to-panel', (e) => {
+ipcMain.on('expand-to-panel', (e, actualPillW) => {
   if (!win || win.isDestroyed()) { e.returnValue = null; return; }
 
   const [wx, wy] = win.getPosition();
   const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
   const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
 
-  const { winBounds, layout } = computeExpandedBounds(pillX, pillY);
+  const { winBounds, layout } = computeExpandedBounds(pillX, pillY, actualPillW);
   currentLayout = layout;
   isExpanded = true;
 

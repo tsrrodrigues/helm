@@ -583,6 +583,11 @@ html, body {
 }
 .fc-btn.fc-go:hover { background: rgba(108,99,255,.15); color: #8c85ff; }
 
+/* Discrete blink for waiting dots — body class toggle, no inline styles */
+.blink-dim .pdot.wait,
+.blink-dim .fas-dot.wait,
+.blink-dim .ar-dot.wait { opacity: 0.3; }
+
 /* Animations */
 @keyframes pill-bounce {
   0%   { transform: translateY(0); }

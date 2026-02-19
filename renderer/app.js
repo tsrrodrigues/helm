@@ -221,9 +221,25 @@ window.helm.onStateUpdate((next) => {
     for (const a of f.agents) { if (a.status === 'waiting') nowWaiting.add(a.paneId); }
   }
 
-  // Clear dismiss for panes that left waiting (so next time they wait it's a fresh alert)
+  // Build waitingSince maps for detecting new waiting cycles
+  const prevWaitingSince = new Map();
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) { if (a.status === 'waiting') prevWaitingSince.set(a.paneId, a.waitingSince); }
+  }
+  const nowWaitingSince = new Map();
+  for (const f of (next.fronts || [])) {
+    for (const a of f.agents) { if (a.status === 'waiting') nowWaitingSince.set(a.paneId, a.waitingSince); }
+  }
+
+  // Clear dismiss for panes that:
+  // 1. Left waiting (transitioned to running/idle)
+  // 2. Started a NEW waiting cycle (waitingSince changed = agent ran and came back)
   for (const paneId of state.dismissedPanes) {
-    if (!nowWaiting.has(paneId)) state.dismissedPanes.delete(paneId);
+    if (!nowWaiting.has(paneId)) {
+      state.dismissedPanes.delete(paneId);
+    } else if (prevWaitingSince.get(paneId) !== nowWaitingSince.get(paneId)) {
+      state.dismissedPanes.delete(paneId);
+    }
   }
 
   // Detect newly waiting panes (not previously waiting) for bounce nudge
@@ -301,7 +317,7 @@ function togglePanel(force) {
 
   if (wantOpen) {
     // ── OPEN — expand window, then fade in panel ──
-    const layout = window.helm.expandToPanel();
+    const layout = window.helm.expandToPanel(pill.offsetWidth);
     if (layout) { state.layout = layout; applyLayout(); }
 
     state.open = true;
@@ -1260,12 +1276,8 @@ function renderFocusCard() {
 }
 
 // ── Discrete blink for waiting dots (no CSS animation = no 60fps GPU compositing) ──
-// Toggles opacity every 1.5s — causes exactly 1 repaint per toggle instead of continuous
-let _blinkOn = true;
+// Toggles a CSS class on body every 1.5s — 1 repaint per toggle.
+// Class-based approach avoids stale inline style.opacity when dots transition .wait → .run
 setInterval(() => {
-  _blinkOn = !_blinkOn;
-  const opacity = _blinkOn ? '1' : '0.3';
-  for (const dot of document.querySelectorAll('.pdot.wait, .fas-dot.wait, .ar-dot.wait')) {
-    dot.style.opacity = opacity;
-  }
+  document.body.classList.toggle('blink-dim');
 }, 1500);

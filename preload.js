@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('helm', {
   getLayout: () => ipcRenderer.sendSync('get-layout'),
   recalculateBounds: () => ipcRenderer.sendSync('recalculate-bounds'),
-  expandToPanel: () => ipcRenderer.sendSync('expand-to-panel'),
+  expandToPanel: (pillWidth) => ipcRenderer.sendSync('expand-to-panel', pillWidth),
   collapseToPill: () => ipcRenderer.sendSync('collapse-to-pill'),
   navigateToPane: (sessionName, windowName, paneId, weztermTabId) =>
     ipcRenderer.send('navigate-to-pane', sessionName, windowName, paneId, weztermTabId),
