@@ -24,7 +24,7 @@ html, body {
   background: rgba(12, 12, 22, 0.96);
   border: 1px solid rgba(255, 165, 2, 0.3);
   border-radius: 24px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,165,2,0.06);
+  box-shadow: none;
   cursor: pointer !important;
   display: flex;
   align-items: center;
@@ -38,7 +38,7 @@ html, body {
 
 .pill.has-waiting {
   border-color: rgba(255, 165, 2, 0.55);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 8px rgba(255,165,2,0.15), 0 0 0 1px rgba(255,165,2,0.1);
+  box-shadow: 0 0 8px rgba(255,165,2,0.15), 0 0 0 1px rgba(255,165,2,0.1);
 }
 
 .pill.pill-nudge {
@@ -47,7 +47,7 @@ html, body {
 
 .pill.all-ok {
   border-color: rgba(46, 213, 115, 0.25);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(46,213,115,0.05);
+  box-shadow: 0 0 0 1px rgba(46,213,115,0.05);
 }
 .pill.all-ok:hover { border-color: rgba(46, 213, 115, 0.45); }
 
@@ -64,7 +64,7 @@ html, body {
 /* ── Panel ─────────────────────────────────────────── */
 .panel {
   position: absolute;
-  width: 960px;
+  width: 1170px;
   background: rgba(10, 10, 20, 0.97);
   border: 1px solid rgba(255,255,255,0.09);
   border-radius: 18px;
