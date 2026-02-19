@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Helm — AI Agent HUD for macOS</title>
+  <link rel="icon" type="image/png" href="../assets/icon.png" />
+  <style>
+    :root {
+      --bg: #08080d;
+      --bg-card: #0e0e18;
+      --bg-card-hover: #141422;
+      --border: #1a1a2e;
+      --text: #e4e4ef;
+      --text-muted: #7a7a96;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108, 99, 255, 0.12);
+      --green: #2ed573;
+      --amber: #ffa502;
+      --red: #ff4757;
+      --radius: 14px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Nav ─────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      background: rgba(8, 8, 13, 0.85);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 18px; color: var(--text);
+      text-decoration: none;
+    }
+    .nav-brand img { width: 28px; height: 28px; }
+    .nav-links { display: flex; gap: 28px; }
+    .nav-links a {
+      color: var(--text-muted); text-decoration: none; font-size: 14px;
+      font-weight: 500; transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      min-height: 92vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 120px 24px 60px;
+      position: relative; overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; top: -300px; left: 50%; transform: translateX(-50%);
+      width: 900px; height: 900px;
+      background: radial-gradient(circle, rgba(108,99,255,0.08) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 16px; border-radius: 100px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      font-size: 13px; color: var(--text-muted); margin-bottom: 32px;
+    }
+    .hero-badge .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    h1 {
+      font-size: clamp(44px, 7vw, 76px);
+      font-weight: 800; line-height: 1.08;
+      letter-spacing: -0.035em;
+      margin-bottom: 24px;
+    }
+    h1 .gradient {
+      background: linear-gradient(135deg, #ffa502, #ff6348);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: 19px; color: var(--text-muted);
+      max-width: 620px; margin-bottom: 44px; line-height: 1.65;
+    }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 13px 28px; border-radius: 10px;
+      font-size: 15px; font-weight: 600; text-decoration: none;
+      transition: all 0.2s; cursor: pointer; border: none;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #5a52e0; transform: translateY(-1px); }
+    .btn-secondary {
+      background: var(--bg-card); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--bg-card-hover); border-color: #2a2a3e; }
+    .install-block {
+      margin-top: 48px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 24px;
+      font-family: var(--mono); font-size: 14px; color: var(--text-muted);
+      display: inline-flex; align-items: center; gap: 12px;
+    }
+    .install-block code { color: var(--text); }
+    .install-block .prompt { color: var(--accent); }
+
+    /* ── Mockup components ───────────────────── */
+    .mockup-section {
+      max-width: 1100px; margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    /* Pill mockup */
+    .pill-mockup-container {
+      display: flex; flex-direction: column; align-items: center; gap: 40px;
+      margin: 60px auto 0;
+    }
+    .pill-mockup {
+      display: inline-flex; align-items: center; gap: 12px;
+      background: rgba(12,12,22,0.96);
+      border-radius: 24px; padding: 8px 18px 8px 13px;
+      min-height: 42px;
+    }
+    .pill-ok {
+      border: 1px solid rgba(46,213,115,0.3);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 0 1px rgba(46,213,115,0.05);
+    }
+    .pill-waiting {
+      border: 1px solid rgba(255,165,2,0.55);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6), 0 0 8px rgba(255,165,2,0.15);
+      animation: pill-bounce 0.5s cubic-bezier(0.36,0.07,0.19,0.97);
+    }
+    @keyframes pill-bounce {
+      0% { transform: translateY(0); } 30% { transform: translateY(-3px); }
+      50% { transform: translateY(1px); } 70% { transform: translateY(-1px); }
+      100% { transform: translateY(0); }
+    }
+    .pill-dots { display: flex; gap: 6px; align-items: center; }
+    .pill-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .pill-dot.g { background: #2ed573; box-shadow: 0 0 6px rgba(46,213,115,.55); }
+    .pill-dot.a { background: #ffa502; box-shadow: 0 0 7px rgba(255,165,2,.65); animation: blink 1.5s infinite; }
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+    .pill-div { width: 1px; height: 17px; background: rgba(255,255,255,0.1); }
+    .pill-text { font-size: 14px; font-weight: 600; white-space: nowrap; }
+    .pill-text.ok { color: #2ed573; }
+    .pill-text.w { color: #ffa502; }
+
+    .pill-states { display: flex; gap: 48px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .pill-state { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .pill-label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+    /* Focus card mockup */
+    .focus-mockup {
+      background: rgba(10,10,20,0.97);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 18px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+      padding: 20px 22px;
+      max-width: 440px;
+      margin: 0 auto;
+    }
+    .focus-mockup .fc-inner {
+      border-left: 4px solid rgba(99,179,237,.65);
+      padding-left: 16px;
+    }
+    .fc-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .fc-project { font-size: 11px; font-weight: 700; font-family: var(--mono); color: rgba(99,179,237,.9); letter-spacing: .03em; }
+    .fc-elapsed { font-size: 11px; color: var(--amber); font-weight: 600; }
+    .fc-task { font-size: 17px; font-weight: 700; color: #e0e0e0; margin-bottom: 4px; letter-spacing: -.01em; }
+    .fc-agent { font-size: 9px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 14px; }
+    .fc-summary { font-size: 13px; color: #999; line-height: 1.5; margin-bottom: 12px; }
+    .fc-prompt-line {
+      font-size: 12px; font-family: var(--mono); color: #777;
+      background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+      border-radius: 6px; padding: 8px 12px; margin-bottom: 16px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .fc-actions { display: flex; gap: 8px; }
+    .fc-btn {
+      font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03);
+      color: #888; cursor: default;
+    }
+    .fc-btn.go { color: #6c63ff; border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.08); }
+
+    /* Panel mockup */
+    .panel-mockup {
+      background: rgba(10,10,20,0.97);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 18px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+      padding: 16px;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .pm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .pm-title { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #3a3a5a; }
+    .pm-hint { font-size: 12px; color: #8c85ff; }
+    .pm-front {
+      border-radius: 12px; overflow: hidden; margin-bottom: 9px;
+      border: 1px solid rgba(99,179,237,.35);
+    }
+    .pm-front.amber { border-color: rgba(255,165,2,.28); }
+    .pm-front-head {
+      padding: 11px 13px 9px;
+      background: rgba(255,255,255,.02);
+      border-left: 3px solid rgba(99,179,237,.55);
+    }
+    .pm-front.amber .pm-front-head { border-left-color: rgba(246,173,85,.55); }
+    .pm-fname { font-size: 15px; font-weight: 700; color: #d0d0d0; }
+    .pm-proj { font-size: 10px; font-weight: 700; font-family: var(--mono); color: rgba(99,179,237,.85); margin-top: 3px; }
+    .pm-front.amber .pm-proj { color: rgba(246,173,85,.85); }
+    .pm-summary { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    .pm-sdot { width: 7px; height: 7px; border-radius: 50%; }
+    .pm-sdot.g { background: #2ed573; }
+    .pm-sdot.a { background: #ffa502; }
+    .pm-stext { font-size: 12px; color: #555; }
+    .pm-stext.alert { color: #8a5a10; font-weight: 600; }
+
+    .pm-agent-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 9px 13px; border-top: 1px solid rgba(255,255,255,.04);
+    }
+    .pm-agent-row.selected {
+      background: rgba(108,99,255,0.08);
+      box-shadow: inset 2px 0 0 #6c63ff;
+    }
+    .pm-agent-row.wait-row { background: rgba(255,165,2,.02); }
+    .pm-ar-num {
+      font-size: 12px; font-weight: 700; color: #6c63ff;
+      background: rgba(108,99,255,0.12);
+      width: 21px; height: 21px; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .pm-ar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+    .pm-ar-dot.g { background: #2ed573; }
+    .pm-ar-dot.a { background: #ffa502; }
+    .pm-ar-body { flex: 1; min-width: 0; }
+    .pm-ar-top { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+    .pm-ar-tag { font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: #444; }
+    .pm-ar-time { font-size: 12px; color: #555; margin-left: auto; font-variant-numeric: tabular-nums; }
+    .pm-ar-name { font-size: 13px; font-weight: 600; color: #ddd; }
+    .pm-ar-nav { font-size: 13px; font-weight: 600; color: #6c63ff; white-space: nowrap; padding-top: 3px; }
+
+    .pm-footer {
+      display: flex; gap: 16px; margin-top: 13px; padding-top: 11px;
+      border-top: 1px solid rgba(255,255,255,.05);
+    }
+    .pm-fi { font-size: 13px; color: #444; }
+    .pm-fi strong { color: #666; }
+    .pm-fi.alert strong { color: #ffa502; }
+
+    /* ── Sections ────────────────────────────── */
+    section { max-width: 1100px; margin: 0 auto; padding: 100px 24px; }
+    .section-label {
+      font-size: 13px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px;
+    }
+    h2 {
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700; letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+    .section-sub { font-size: 17px; color: var(--text-muted); max-width: 620px; margin-bottom: 56px; line-height: 1.6; }
+
+    /* ── Feature showcase (alternating) ──────── */
+    .showcase { display: flex; flex-direction: column; gap: 120px; }
+    .showcase-item {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center;
+    }
+    .showcase-item.reverse .showcase-text { order: 2; }
+    .showcase-item.reverse .showcase-visual { order: 1; }
+    .showcase-text h3 {
+      font-size: 26px; font-weight: 700; margin-bottom: 12px; letter-spacing: -.02em;
+    }
+    .showcase-text p {
+      font-size: 15px; color: var(--text-muted); line-height: 1.7; margin-bottom: 16px;
+    }
+    .showcase-tag {
+      display: inline-block; font-size: 12px; font-weight: 600;
+      color: var(--accent); background: var(--accent-glow);
+      padding: 4px 10px; border-radius: 6px; margin-bottom: 14px;
+    }
+
+    /* ── Shortcut Table ──────────────────────── */
+    .shortcut-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      max-width: 700px;
+    }
+    .sc-item {
+      display: flex; align-items: center; gap: 14px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 16px;
+      transition: border-color .2s;
+    }
+    .sc-item:hover { border-color: #2a2a3e; }
+    .sc-keys { display: flex; gap: 4px; flex-shrink: 0; }
+    kbd {
+      display: inline-block; padding: 3px 8px;
+      background: rgba(255,255,255,.06); border: 1px solid var(--border);
+      border-radius: 6px; font-family: var(--mono); font-size: 12px;
+      color: var(--text-muted);
+    }
+    .sc-desc { font-size: 14px; color: var(--text-muted); }
+
+    /* ── Features grid (smaller) ─────────────── */
+    .features-mini { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .feature-mini {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px;
+      transition: all 0.25s;
+    }
+    .feature-mini:hover { border-color: #2a2a3e; background: var(--bg-card-hover); }
+    .feature-mini h4 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .feature-mini p { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+    /* ── CTA ──────────────────────────────────── */
+    .cta {
+      text-align: center; padding: 100px 24px;
+      position: relative;
+    }
+    .cta::before {
+      content: '';
+      position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .cta h2 { margin-bottom: 16px; }
+    .cta p { color: var(--text-muted); font-size: 17px; margin-bottom: 32px; }
+
+    /* ── Footer ───────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 24px; text-align: center;
+      font-size: 13px; color: #444;
+    }
+    footer a { color: var(--text-muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* ── Annotation ─────────────────────────── */
+    .annotation {
+      font-size: 12px; color: var(--text-muted); text-align: center;
+      margin-top: 12px; font-style: italic;
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .hero { padding: 100px 20px 60px; }
+      .showcase-item { grid-template-columns: 1fr; gap: 32px; }
+      .showcase-item.reverse .showcase-text { order: 1; }
+      .showcase-item.reverse .showcase-visual { order: 2; }
+      .shortcut-grid { grid-template-columns: 1fr; }
+      section { padding: 60px 20px; }
+    }
+    /* ── Demo Stepper ────────────────────────── */
+    .demo-stepper {
+      max-width: 780px; width: 100%; margin-top: 52px;
+      position: relative;
+    }
+    .demo-steps-nav {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0; margin-bottom: 28px;
+    }
+    .step-dot {
+      display: flex; align-items: center; gap: 7px;
+      background: none; border: none; cursor: pointer;
+      padding: 8px 14px; border-radius: 8px;
+      font-size: 13px; font-weight: 500; color: #444;
+      transition: all 0.3s;
+    }
+    .step-dot:hover { color: var(--text-muted); }
+    .step-dot.active { color: var(--text); background: rgba(255,255,255,0.04); }
+    .step-dot.done { color: var(--green); }
+    .step-num-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 50%;
+      font-size: 11px; font-weight: 700;
+      background: rgba(255,255,255,0.05); border: 1px solid #2a2a3e;
+      transition: all 0.3s;
+    }
+    .step-dot.active .step-num-badge {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .step-dot.done .step-num-badge {
+      background: rgba(46,213,115,0.15); border-color: var(--green); color: var(--green);
+    }
+    .step-connector-line {
+      width: 28px; height: 1px; background: #1e1e2e; flex-shrink: 0;
+    }
+
+    /* Viewport */
+    .demo-viewport {
+      position: relative;
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      min-height: 380px;
+    }
+    .demo-frame {
+      position: absolute; inset: 0;
+      opacity: 0; transform: translateX(30px);
+      transition: opacity 0.45s ease, transform 0.45s ease;
+      pointer-events: none;
+    }
+    .demo-frame.active {
+      opacity: 1; transform: translateX(0);
+      pointer-events: auto; position: relative;
+    }
+    .demo-frame.exit-left {
+      opacity: 0; transform: translateX(-30px);
+    }
+
+    /* Scene layout */
+    .df-scene { padding: 32px; }
+    .df-description { margin-bottom: 24px; }
+    .df-desc-title { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .df-desc-title kbd {
+      background: rgba(108,99,255,0.15); border-color: rgba(108,99,255,0.3);
+      color: var(--accent); font-size: 13px;
+    }
+    .df-desc-sub { font-size: 14px; color: var(--text-muted); }
+    .df-visual { position: relative; }
+
+    /* Code editor mockup */
+    .df-code-bg {
+      background: #0c0c14; border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px; padding: 18px 20px;
+      font-family: var(--mono); font-size: 13px; line-height: 1.9;
+    }
+    .df-code-line { white-space: nowrap; }
+    .c-kw { color: #c792ea; }
+    .c-fn { color: #82aaff; }
+    .c-p { color: #f78c6c; }
+    .c-s { color: #c3e88d; }
+    .c-n { color: #f78c6c; }
+    .c-cursor::after { content: ''; }
+    .df-code-line.c-cursor { color: var(--text); }
+
+    /* Floating pill in demo */
+    .df-pill-float {
+      position: absolute; top: 12px; right: 12px;
+      display: inline-flex; align-items: center; gap: 10px;
+      border-radius: 20px; padding: 6px 14px 6px 10px;
+      background: rgba(12,12,22,0.96);
+      z-index: 2;
+    }
+    .df-pill-ok {
+      border: 1px solid rgba(46,213,115,0.3);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    }
+    .df-pill-bounce {
+      border: 1px solid rgba(255,165,2,0.55);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4), 0 0 8px rgba(255,165,2,0.12);
+      animation: demo-bounce 0.5s cubic-bezier(0.36,0.07,0.19,0.97);
+    }
+    @keyframes demo-bounce {
+      0% { transform: translateY(0); } 30% { transform: translateY(-4px); }
+      50% { transform: translateY(2px); } 100% { transform: translateY(0); }
+    }
+    .df-pill-dots { display: flex; gap: 5px; }
+    .df-pdot { width: 8px; height: 8px; border-radius: 50%; }
+    .df-pdot.g { background: #2ed573; box-shadow: 0 0 5px rgba(46,213,115,.4); }
+    .df-pdot.a { background: #ffa502; box-shadow: 0 0 6px rgba(255,165,2,.5); }
+    .df-pdot.blink { animation: blink 1.5s infinite; }
+    .df-pdiv { width: 1px; height: 14px; background: rgba(255,255,255,0.1); }
+    .df-ptext { font-size: 13px; font-weight: 600; }
+    .df-ptext.g { color: #2ed573; }
+    .df-ptext.a { color: #ffa502; }
+
+    /* Notification mockup */
+    .df-notif {
+      position: absolute; top: 52px; right: 12px;
+      background: rgba(30,30,46,0.95); border: 1px solid var(--border);
+      border-radius: 12px; padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      animation: notif-slide 0.4s ease-out;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      z-index: 3;
+    }
+    @keyframes notif-slide {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .df-notif-icon {
+      width: 30px; height: 30px; border-radius: 7px;
+      background: rgba(108,99,255,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
+    }
+    .df-notif-title { font-size: 12px; font-weight: 600; color: var(--text); }
+    .df-notif-body { font-size: 11px; color: var(--text-muted); }
+    .df-notif-time { font-size: 10px; color: #444; margin-left: auto; flex-shrink: 0; }
+
+    /* Focus card in demo */
+    .df-focus-card {
+      background: rgba(10,10,20,0.97); border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 14px; padding: 20px 22px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+      max-width: 460px;
+    }
+    .df-fc-inner { border-left: 4px solid rgba(246,173,85,.65); padding-left: 16px; }
+    .df-fc-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .df-fc-project { font-size: 11px; font-weight: 700; font-family: var(--mono); color: rgba(246,173,85,.9); letter-spacing: .03em; }
+    .df-fc-elapsed { font-size: 11px; color: var(--amber); font-weight: 600; }
+    .df-fc-task { font-size: 16px; font-weight: 700; color: #e0e0e0; margin-bottom: 3px; }
+    .df-fc-agent { font-size: 9px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 12px; }
+    .df-fc-summary { font-size: 13px; color: #999; line-height: 1.5; margin-bottom: 10px; }
+    .df-fc-prompt {
+      font-size: 12px; font-family: var(--mono); color: #777;
+      background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+      border-radius: 6px; padding: 7px 11px; margin-bottom: 14px;
+    }
+    .df-fc-actions { display: flex; gap: 7px; }
+    .df-fc-btn {
+      font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); color: #666;
+    }
+    .df-fc-btn.go { color: #6c63ff; border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.08); }
+
+    /* Terminal in demo */
+    .df-terminal {
+      background: #0c0c14; border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px; overflow: hidden;
+    }
+    .df-term-bar {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 12px; background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .df-term-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .df-term-dot.r { background: #ff5f57; }
+    .df-term-dot.y { background: #febc2e; }
+    .df-term-dot.g { background: #28c840; }
+    .df-term-title { font-size: 11px; color: #555; margin-left: auto; font-family: var(--mono); }
+    .df-term-body { padding: 16px 18px; font-family: var(--mono); font-size: 13px; line-height: 1.8; }
+    .df-term-line { color: var(--text-muted); }
+    .df-term-line.dim { color: #444; }
+    .df-term-line.amber { color: var(--amber); font-weight: 600; }
+    .df-term-cursor {
+      color: var(--green); font-weight: 700;
+      animation: cursor-blink 1s step-end infinite;
+    }
+    @keyframes cursor-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* Progress bar */
+    .demo-progress {
+      height: 3px; background: rgba(255,255,255,0.04);
+      border-radius: 2px; margin-top: 16px; overflow: hidden;
+    }
+    .demo-progress-fill {
+      height: 100%; width: 0%; background: var(--accent);
+      border-radius: 2px; transition: width 0.1s linear;
+    }
+
+    /* Dashboard mockup (agent list view) */
+    .df-dashboard {
+      background: #0c0c14; border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px; padding: 16px 18px;
+    }
+    .df-dash-row { display: flex; flex-direction: column; gap: 0; }
+    .df-dash-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      transition: background 0.2s;
+    }
+    .df-dash-item:last-child { border-bottom: none; }
+    .df-dash-item.waiting { background: rgba(255,165,2,0.04); }
+    .df-dash-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .df-dash-dot.g { background: #2ed573; box-shadow: 0 0 5px rgba(46,213,115,.4); }
+    .df-dash-dot.a { background: #ffa502; box-shadow: 0 0 6px rgba(255,165,2,.5); }
+    .df-dash-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: #d0d0d0; min-width: 120px; }
+    .df-dash-status { font-size: 12px; color: #555; }
+    .df-dash-status.amber { color: var(--amber); font-weight: 600; }
+    .df-dash-footer {
+      font-size: 12px; color: #444; margin-top: 10px; padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .df-dash-footer .amber { color: var(--amber); font-weight: 600; }
+
+    @media (max-width: 768px) {
+      .demo-steps-nav { flex-wrap: wrap; gap: 4px; }
+      .step-connector-line { display: none; }
+      .step-dot { font-size: 12px; padding: 6px 10px; }
+      .df-scene { padding: 20px; }
+      .df-notif { display: none; }
+      .df-dash-name { min-width: 90px; }
+    }
+
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-brand" href="#">
+      <img src="../assets/icon.png" alt="Helm" />
+      Helm
+    </a>
+    <div class="nav-links">
+      <a href="#pill-section">The Pill</a>
+      <a href="#focus-section">Focus Mode</a>
+      <a href="#panel-section">Panel</a>
+      <a href="#shortcuts">Shortcuts</a>
+      <a href="https://github.com/tsrrodrigues/helm" target="_blank">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge">
+    <span class="dot"></span>
+    macOS · Electron · Always-on-Top
+  </div>
+  <h1>Run many agents.<br /><span class="gradient">Know when each one needs you.</span></h1>
+  <p class="hero-sub">
+    Helm is an always-visible HUD for people who manage multiple AI agents in parallel. It watches all your tmux sessions and tells you the instant any agent needs attention — so you stay in flow instead of checking terminals.
+  </p>
+
+  <!-- ═══ Animated Stepper Demo ═══ -->
+  <div class="demo-stepper" id="demo-stepper">
+    <!-- Step indicators -->
+    <div class="demo-steps-nav">
+      <button class="step-dot active" data-step="0"><span class="step-num-badge">1</span> Agents running</button>
+      <div class="step-connector-line"></div>
+      <button class="step-dot" data-step="1"><span class="step-num-badge">2</span> One finishes</button>
+      <div class="step-connector-line"></div>
+      <button class="step-dot" data-step="2"><span class="step-num-badge">3</span> Context card</button>
+      <div class="step-connector-line"></div>
+      <button class="step-dot" data-step="3"><span class="step-num-badge">4</span> Jump & handle</button>
+    </div>
+
+    <!-- Demo viewport -->
+    <div class="demo-viewport">
+      <!-- Step 0: Multiple agents running, you're doing something else -->
+      <div class="demo-frame active" data-frame="0">
+        <div class="df-scene">
+          <div class="df-description">
+            <div class="df-desc-title">You launched 4 agents across 3 projects. They're all working.</div>
+            <div class="df-desc-sub">The pill sits in the corner — green dots, all quiet. You focus on something else.</div>
+          </div>
+          <div class="df-visual">
+            <div class="df-dashboard">
+              <div class="df-dash-row">
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">refactor-api</span><span class="df-dash-status">restructuring auth module</span></div>
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">add-tests</span><span class="df-dash-status">writing integration tests</span></div>
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">fix-payments</span><span class="df-dash-status">fixing Stripe webhook</span></div>
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">migrate-db</span><span class="df-dash-status">generating schema migration</span></div>
+              </div>
+              <div class="df-dash-footer">4 agents running · 0 waiting</div>
+            </div>
+            <div class="df-pill-float df-pill-ok">
+              <div class="df-pill-dots">
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+              </div>
+              <div class="df-pdiv"></div>
+              <span class="df-ptext g"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 1: Agent finishes, pill bounces amber -->
+      <div class="demo-frame" data-frame="1">
+        <div class="df-scene">
+          <div class="df-description">
+            <div class="df-desc-title">One agent finishes and needs your input. The pill bounces.</div>
+            <div class="df-desc-sub">Amber dot appears, the count shows "1". A native macOS notification fires.</div>
+          </div>
+          <div class="df-visual">
+            <div class="df-dashboard">
+              <div class="df-dash-row">
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">refactor-api</span><span class="df-dash-status">restructuring auth module</span></div>
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">add-tests</span><span class="df-dash-status">writing integration tests</span></div>
+                <div class="df-dash-item waiting"><span class="df-dash-dot a blink"></span><span class="df-dash-name">fix-payments</span><span class="df-dash-status amber">waiting for your input</span></div>
+                <div class="df-dash-item"><span class="df-dash-dot g"></span><span class="df-dash-name">migrate-db</span><span class="df-dash-status">generating schema migration</span></div>
+              </div>
+              <div class="df-dash-footer">3 running · <span class="amber">1 waiting</span></div>
+            </div>
+            <div class="df-pill-float df-pill-bounce">
+              <div class="df-pill-dots">
+                <div class="df-pdot a blink"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+              </div>
+              <div class="df-pdiv"></div>
+              <span class="df-ptext a">1</span>
+            </div>
+            <div class="df-notif">
+              <div class="df-notif-icon">⎈</div>
+              <div>
+                <div class="df-notif-title">Helm</div>
+                <div class="df-notif-body">fix-payments is waiting for input</div>
+              </div>
+              <span class="df-notif-time">now</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Press shortcut, focus card appears -->
+      <div class="demo-frame" data-frame="2">
+        <div class="df-scene">
+          <div class="df-description">
+            <div class="df-desc-title">You press <kbd>Ctrl</kbd><kbd>H</kbd>. The focus card shows everything.</div>
+            <div class="df-desc-sub">Project, task, wait time, AI summary, and the exact prompt — before you even switch windows.</div>
+          </div>
+          <div class="df-visual">
+            <div class="df-focus-card">
+              <div class="df-fc-inner">
+                <div class="df-fc-head">
+                  <span class="df-fc-project">billing-service</span>
+                  <span class="df-fc-elapsed">esperando 32s</span>
+                </div>
+                <div class="df-fc-task">fixing Stripe webhook handler</div>
+                <div class="df-fc-agent">claude · 2.1.37</div>
+                <div class="df-fc-summary">
+                  Refactored the webhook signature verification. Found 2 edge cases with idempotency keys. Needs confirmation to apply the retry logic.
+                </div>
+                <div class="df-fc-prompt">Apply retry logic to handlePaymentIntent? (y/n)</div>
+                <div class="df-fc-actions">
+                  <div class="df-fc-btn go">Enter ir</div>
+                  <div class="df-fc-btn">x dispensar</div>
+                  <div class="df-fc-btn">Tab ver tudo</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Jump to terminal, handle it, back to managing -->
+      <div class="demo-frame" data-frame="3">
+        <div class="df-scene">
+          <div class="df-description">
+            <div class="df-desc-title">Press Enter. Handle it. The other 3 agents kept working.</div>
+            <div class="df-desc-sub">Helm selects the tmux pane, activates the WezTerm tab. You respond, and you're back to managing — not waiting.</div>
+          </div>
+          <div class="df-visual">
+            <div class="df-terminal">
+              <div class="df-term-bar">
+                <div class="df-term-dot r"></div>
+                <div class="df-term-dot y"></div>
+                <div class="df-term-dot g"></div>
+                <span class="df-term-title">fix-payments — claude</span>
+              </div>
+              <div class="df-term-body">
+                <div class="df-term-line dim">✓ Refactored webhook signature verification</div>
+                <div class="df-term-line dim">✓ Found idempotency edge cases in handlePaymentIntent</div>
+                <div class="df-term-line dim">✓ Created retry logic with exponential backoff</div>
+                <div class="df-term-line"></div>
+                <div class="df-term-line amber">Apply retry logic to handlePaymentIntent? (y/n)</div>
+                <div class="df-term-line"><span class="df-term-cursor">y</span></div>
+              </div>
+            </div>
+            <div class="df-pill-float df-pill-ok" style="bottom: 12px; top: auto;">
+              <div class="df-pill-dots">
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+                <div class="df-pdot g"></div>
+              </div>
+              <div class="df-pdiv"></div>
+              <span class="df-ptext g"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="demo-progress">
+      <div class="demo-progress-fill" id="demo-progress-fill"></div>
+    </div>
+  </div>
+
+  <div class="hero-actions" style="margin-top: 44px;">
+    <a class="btn btn-primary" href="https://github.com/tsrrodrigues/helm" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      Get Helm
+    </a>
+    <a class="btn btn-secondary" href="#pill-section">Learn More ↓</a>
+  </div>
+  <div class="install-block" style="margin-top: 24px;">
+    <span class="prompt">$</span>
+    <code>git clone https://github.com/tsrrodrigues/helm && cd helm && npm run service</code>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SHOWCASE 1: The Pill                           -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="pill-section">
+  <div class="section-label">The Pill</div>
+  <h2>A tiny signal that says everything</h2>
+  <p class="section-sub">
+    The pill floats in the corner of your screen — always visible, zero distraction. Colored dots show running agents. The number shows how many are waiting for you.
+  </p>
+
+  <div class="pill-states">
+    <div class="pill-state">
+      <div class="pill-mockup pill-ok">
+        <div class="pill-dots">
+          <div class="pill-dot g"></div>
+          <div class="pill-dot g"></div>
+          <div class="pill-dot g"></div>
+        </div>
+        <div class="pill-div"></div>
+        <span class="pill-text ok"></span>
+      </div>
+      <span class="pill-label">All running — stay focused</span>
+    </div>
+
+    <div class="pill-state">
+      <div class="pill-mockup pill-waiting">
+        <div class="pill-dots">
+          <div class="pill-dot a"></div>
+          <div class="pill-dot g"></div>
+          <div class="pill-dot g"></div>
+        </div>
+        <div class="pill-div"></div>
+        <span class="pill-text w">1</span>
+      </div>
+      <span class="pill-label">One agent needs you — pill bounces</span>
+    </div>
+
+    <div class="pill-state">
+      <div class="pill-mockup pill-waiting" style="animation:none">
+        <div class="pill-dots">
+          <div class="pill-dot a"></div>
+          <div class="pill-dot a"></div>
+          <div class="pill-dot g"></div>
+        </div>
+        <div class="pill-div"></div>
+        <span class="pill-text w">2</span>
+      </div>
+      <span class="pill-label">Two waiting — you're the bottleneck</span>
+    </div>
+  </div>
+  <p class="annotation">Drag the pill anywhere on screen. Click it or press Ctrl+H to open.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SHOWCASE 2: Focus Card                         -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="focus-section">
+  <div class="showcase">
+    <div class="showcase-item">
+      <div class="showcase-text">
+        <span class="showcase-tag">Focus Mode</span>
+        <h3>Context before you jump</h3>
+        <p>
+          When an agent transitions to waiting, opening the panel shows a <strong>focus card</strong> — not the full list. You see the project, the task name, how long it's been waiting, and an AI-generated summary of what the agent needs.
+        </p>
+        <p>
+          Press <kbd>Enter</kbd> to jump straight to the terminal. Press <kbd>x</kbd> to dismiss and see the next waiting agent. Press <kbd>Tab</kbd> to see all sessions.
+        </p>
+        <p style="color: var(--amber); font-size: 14px; font-weight: 600;">
+          You never land in a terminal blind. You always know what's waiting.
+        </p>
+      </div>
+      <div class="showcase-visual">
+        <div class="focus-mockup">
+          <div class="fc-inner">
+            <div class="fc-head">
+              <span class="fc-project">legal-doc-api</span>
+              <span class="fc-elapsed">esperando 45s</span>
+            </div>
+            <div class="fc-task">refactoring auth middleware</div>
+            <div class="fc-agent">claude · 2.1.37</div>
+            <div class="fc-summary">
+              Finished restructuring the JWT validation. Needs confirmation to update 3 route handlers that import the old middleware path.
+            </div>
+            <div class="fc-prompt-line">Do you want me to update the imports in routes/? (y/n)</div>
+            <div class="fc-actions">
+              <div class="fc-btn go">Enter ir</div>
+              <div class="fc-btn">x dispensar</div>
+              <div class="fc-btn">Tab ver tudo</div>
+            </div>
+          </div>
+        </div>
+        <p class="annotation">The focus card: project, task, summary, last prompt — all at a glance.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SHOWCASE 3: Full Panel                         -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="panel-section">
+  <div class="showcase">
+    <div class="showcase-item reverse">
+      <div class="showcase-text">
+        <span class="showcase-tag">Full Panel</span>
+        <h3>All your fronts, one view</h3>
+        <p>
+          Sessions are grouped by project with color-coded borders. Each front shows a live summary: how many agents are running, how many are waiting.
+        </p>
+        <p>
+          Click any row to jump to that pane in your terminal. Waiting agents glow amber. Running agents show green. <strong>⌘1–9</strong> jumps directly by position.
+        </p>
+        <p>
+          Inline rename, drag to reorder, create new sessions and windows — all without leaving the overlay.
+        </p>
+      </div>
+      <div class="showcase-visual">
+        <div class="panel-mockup">
+          <div class="pm-header">
+            <span class="pm-title">frentes ativas</span>
+            <span class="pm-hint">j/k navegar · Enter ir · x dispensar · r renomear</span>
+          </div>
+
+          <!-- Front 1 -->
+          <div class="pm-front">
+            <div class="pm-front-head">
+              <div class="pm-fname">refactor-api</div>
+              <div class="pm-proj">legal-doc-api</div>
+              <div class="pm-summary">
+                <div class="pm-sdot g"></div>
+                <span class="pm-stext">0 aguardando · 2 rodando</span>
+              </div>
+            </div>
+            <div class="pm-agent-row">
+              <span class="pm-ar-num">1</span>
+              <div class="pm-ar-dot g"></div>
+              <div class="pm-ar-body">
+                <div class="pm-ar-top">
+                  <span class="pm-ar-tag">claude</span>
+                  <span class="pm-ar-time">3m</span>
+                </div>
+                <div class="pm-ar-name">restructuring auth module</div>
+              </div>
+              <span class="pm-ar-nav">ir →</span>
+            </div>
+            <div class="pm-agent-row selected">
+              <span class="pm-ar-num">2</span>
+              <div class="pm-ar-dot g"></div>
+              <div class="pm-ar-body">
+                <div class="pm-ar-top">
+                  <span class="pm-ar-tag">codex</span>
+                  <span class="pm-ar-time">1m</span>
+                </div>
+                <div class="pm-ar-name">writing integration tests</div>
+              </div>
+              <span class="pm-ar-nav">ir →</span>
+            </div>
+          </div>
+
+          <!-- Front 2 -->
+          <div class="pm-front amber">
+            <div class="pm-front-head" style="border-left-color: rgba(246,173,85,.55)">
+              <div class="pm-fname">fix-payments</div>
+              <div class="pm-proj" style="color: rgba(246,173,85,.85)">billing-service</div>
+              <div class="pm-summary">
+                <div class="pm-sdot a"></div>
+                <span class="pm-stext alert">1 aguardando · 0 rodando</span>
+              </div>
+            </div>
+            <div class="pm-agent-row wait-row">
+              <span class="pm-ar-num">3</span>
+              <div class="pm-ar-dot a"></div>
+              <div class="pm-ar-body">
+                <div class="pm-ar-top">
+                  <span class="pm-ar-tag">claude</span>
+                  <span class="pm-ar-time">45s</span>
+                </div>
+                <div class="pm-ar-name">fixing Stripe webhook handler</div>
+              </div>
+              <span class="pm-ar-nav">ir →</span>
+            </div>
+          </div>
+
+          <div class="pm-footer">
+            <span class="pm-fi"><strong>2</strong> frentes</span>
+            <span class="pm-fi"><strong>3</strong> agentes</span>
+            <span class="pm-fi alert"><strong>1</strong> aguardando</span>
+          </div>
+        </div>
+        <p class="annotation">Grouped by project. Amber = waiting. Purple highlight = keyboard selection.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SHOWCASE 4: Notification bounce                -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <div class="showcase">
+    <div class="showcase-item">
+      <div class="showcase-text">
+        <span class="showcase-tag">Notifications</span>
+        <h3>You'll never miss a prompt</h3>
+        <p>
+          When an agent goes from running to waiting, three things happen:
+        </p>
+        <p>
+          <strong style="color: var(--amber)">1.</strong> The pill bounces — a subtle physical nudge in the corner of your eye.<br>
+          <strong style="color: var(--amber)">2.</strong> A native macOS notification fires — even if the terminal is hidden.<br>
+          <strong style="color: var(--amber)">3.</strong> The waiting dot starts blinking — amber, pulsing, unmissable.
+        </p>
+        <p>
+          No browser tabs to check. No terminal windows to cycle through. The agent finishes, you <em>know</em>.
+        </p>
+      </div>
+      <div class="showcase-visual" style="display: flex; flex-direction: column; align-items: center; gap: 32px;">
+        <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 20px; display: flex; align-items: center; gap: 14px; max-width: 360px; width: 100%;">
+          <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(108,99,255,.15); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">⎈</div>
+          <div>
+            <div style="font-size: 13px; font-weight: 600; color: var(--text);">Helm</div>
+            <div style="font-size: 12px; color: var(--text-muted);">fix-payments is waiting for input</div>
+          </div>
+          <div style="font-size: 11px; color: #555; margin-left: auto;">now</div>
+        </div>
+        <p class="annotation">Native macOS notification — works even with terminal minimized.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- How It Detects State                           -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <div class="section-label">Under the Hood</div>
+  <h2>Smart state detection</h2>
+  <p class="section-sub">
+    Helm polls tmux every 2 seconds, capturing the last lines of each pane. No agent plugins needed — it reads the terminal output directly.
+  </p>
+
+  <div class="features-mini">
+    <div class="feature-mini">
+      <h4>🟢 Running</h4>
+      <p>Detects spinners (✻ ◆ ⠋), activity text ("Thinking...", "Writing..."), or output that changed since last poll.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🟡 Waiting</h4>
+      <p>Output stable for 3s+ with a recognized prompt (<code>></code>, <code>y/n</code>, "How should I proceed?"). Fallback: 8s stable without prompt.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>⚫ Idle</h4>
+      <p>Pane command is a shell (bash/zsh/fish) with no agent running. Editor panes (vim/nvim) are tracked separately.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🧠 AI Task Names</h4>
+      <p>Each pane gets a human-readable task name generated from the agent's context via the Anthropic API. Updates as the agent progresses.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>📝 Wait Summaries</h4>
+      <p>When an agent starts waiting, Helm generates a summary of what it needs — so you have context before jumping in.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🖥️ Terminal Nav</h4>
+      <p>Click "ir →" and Helm selects the tmux pane + activates the WezTerm tab. Cross-referenced via TTY mapping.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- Shortcuts                                      -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="shortcuts">
+  <div class="section-label">Keyboard Shortcuts</div>
+  <h2>Keyboard-first navigation</h2>
+  <p class="section-sub">
+    Open the panel with Ctrl+H. Everything else is one key away.
+  </p>
+
+  <div class="shortcut-grid">
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>Ctrl</kbd><kbd>H</kbd></div>
+      <span class="sc-desc">Toggle panel + focus oldest waiting</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>Enter</kbd></div>
+      <span class="sc-desc">Jump to selected pane</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>j</kbd> <kbd>k</kbd></div>
+      <span class="sc-desc">Navigate up/down between agents</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>⌘</kbd><kbd>1-9</kbd></div>
+      <span class="sc-desc">Jump to Nth agent directly</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>x</kbd></div>
+      <span class="sc-desc">Dismiss waiting (mark as seen)</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>r</kbd></div>
+      <span class="sc-desc">AI rename selected agent</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>v</kbd></div>
+      <span class="sc-desc">Jump to editor pane (nvim)</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>n</kbd></div>
+      <span class="sc-desc">New window in selected session</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>N</kbd></div>
+      <span class="sc-desc">Create new tmux session</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>d</kbd> / <kbd>D</kbd></div>
+      <span class="sc-desc">Delete window / entire session</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>Tab</kbd></div>
+      <span class="sc-desc">Exit focus mode → see all</span>
+    </div>
+    <div class="sc-item">
+      <div class="sc-keys"><kbd>Esc</kbd></div>
+      <span class="sc-desc">Close panel</span>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- More features                                  -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <div class="section-label">And More</div>
+  <h2>Built for the parallel agent workflow</h2>
+
+  <div class="features-mini" style="margin-top: 40px;">
+    <div class="feature-mini">
+      <h4>🎨 Project Colors</h4>
+      <p>Each project gets a deterministic accent color — blue, purple, green, orange, pink, or cyan. Sessions from the same repo are visually grouped.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🔄 Live Reload</h4>
+      <p>Edit daemon.js, main.js, or renderer files — changes apply instantly. No restart during development.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>📐 Zero Chrome</h4>
+      <p>Transparent Electron window. No title bar, no borders. Only the pill and panel are visible. Mouse passthrough on all transparent areas.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🔋 Low Overhead</h4>
+      <p>Window collapses to pill size when closed — 95% less GPU compositing. Discrete 1.5s blink instead of 60fps CSS animations.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>⚙️ LaunchAgent</h4>
+      <p><code>npm run service</code> installs a macOS LaunchAgent. Starts on login, stays alive, auto-restarts. Logs in <code>~/.helm/logs/</code>.</p>
+    </div>
+    <div class="feature-mini">
+      <h4>🔌 Debug API</h4>
+      <p><code>curl http://127.0.0.1:7374/debug</code> shows raw pane output, detection results, and timing — for tuning detection on new agents.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- CTA -->
+<section class="cta">
+  <h2>Run 5 agents in parallel.<br /><span class="gradient">Know when each one needs you.</span></h2>
+  <p>Open source. Runs local. No telemetry. Just a HUD that keeps you in flow.</p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="https://github.com/tsrrodrigues/helm">View on GitHub</a>
+  </div>
+</section>
+
+<footer>
+  <p>Built by <a href="https://github.com/tsrrodrigues" target="_blank">@tsrrodrigues</a> · MIT License</p>
+</footer>
+
+<script>
+(function() {
+  const STEP_DURATION = 4000; // ms per step
+  const TOTAL_STEPS = 4;
+  let current = 0;
+  let timer = null;
+  let paused = false;
+
+  const dots = document.querySelectorAll('.step-dot');
+  const frames = document.querySelectorAll('.demo-frame');
+  const progressFill = document.getElementById('demo-progress-fill');
+
+  function goTo(step) {
+    // Mark previous as exit
+    frames.forEach(f => {
+      f.classList.remove('active', 'exit-left');
+      if (parseInt(f.dataset.frame) === current && current !== step) {
+        f.classList.add('exit-left');
+      }
+    });
+    current = step;
+    // Activate new
+    frames[current].classList.remove('exit-left');
+    frames[current].classList.add('active');
+    // Update nav
+    dots.forEach((d, i) => {
+      d.classList.remove('active', 'done');
+      if (i === current) d.classList.add('active');
+      else if (i < current) d.classList.add('done');
+    });
+  }
+
+  function startProgress() {
+    let start = performance.now();
+    function tick(now) {
+      if (paused) { timer = requestAnimationFrame(tick); return; }
+      const elapsed = now - start;
+      const stepProgress = (current / TOTAL_STEPS + (elapsed / STEP_DURATION) / TOTAL_STEPS);
+      progressFill.style.width = Math.min(stepProgress * 100, 100) + '%';
+
+      if (elapsed >= STEP_DURATION) {
+        const next = (current + 1) % TOTAL_STEPS;
+        goTo(next);
+        start = performance.now();
+      }
+      timer = requestAnimationFrame(tick);
+    }
+    timer = requestAnimationFrame(tick);
+  }
+
+  // Click step nav
+  dots.forEach((d, i) => {
+    d.addEventListener('click', () => {
+      goTo(i);
+      // Reset timer
+      if (timer) cancelAnimationFrame(timer);
+      startProgress();
+    });
+  });
+
+  // Pause on hover
+  const stepper = document.getElementById('demo-stepper');
+  stepper.addEventListener('mouseenter', () => { paused = true; });
+  stepper.addEventListener('mouseleave', () => { paused = false; });
+
+  // Start
+  startProgress();
+})();
+</script>
+</body>
+</html>
