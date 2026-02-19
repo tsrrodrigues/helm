@@ -479,12 +479,29 @@ ipcMain.handle('create-session', async (_e, name) => {
   const safe = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   if (!safe) return { ok: false, error: 'invalid name after sanitize' };
 
-  const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', os.homedir()]);
+  // Resolve project directory via zoxide
+  const zRes = await runFile('zoxide', ['query', name], true);
+  const cwd = (zRes.ok && zRes.stdout) ? zRes.stdout : os.homedir();
+
+  const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', cwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
 
-  // Open in WezTerm
+  // Start nvim in window 0
+  await runFile('tmux', ['send-keys', '-t', `${safe}:0`, 'nvim', 'Enter'], true);
+
+  // Open in WezTerm (as a new tab in the current window)
   if (weztermBin) {
-    await runFile(weztermBin, ['cli', 'spawn', '--cwd', os.homedir(), '--', 'tmux', 'attach', '-t', safe], true);
+    const spawnArgs = ['cli', 'spawn', '--cwd', cwd];
+    const listRes = await runFile(weztermBin, ['cli', 'list', '--format', 'json'], true);
+    if (listRes.ok && listRes.stdout) {
+      try {
+        const active = JSON.parse(listRes.stdout).find(i => i.is_active);
+        if (active) spawnArgs.push('--window-id', String(active.window_id));
+      } catch {}
+    }
+    spawnArgs.push('--', 'tmux', 'attach', '-t', safe);
+    await runFile(weztermBin, spawnArgs, true);
+    await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
   }
   return { ok: true };
 });
