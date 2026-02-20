@@ -34,11 +34,30 @@ const WEZTERM_CANDIDATES = [
   '/usr/local/bin/wezterm'
 ];
 const weztermBin = WEZTERM_CANDIDATES.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+const WEZTERM_SOCK_DIR = path.join(os.homedir(), '.local', 'share', 'wezterm');
+
+function findWeztermSocket() {
+  try {
+    const entries = fs.readdirSync(WEZTERM_SOCK_DIR);
+    for (const e of entries) {
+      if (!e.startsWith('gui-sock-')) continue;
+      const pid = parseInt(e.replace('gui-sock-', ''), 10);
+      if (!pid) continue;
+      try { process.kill(pid, 0); return path.join(WEZTERM_SOCK_DIR, e); } catch {}
+    }
+  } catch {}
+  return null;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function runFile(file, args = [], silent = false) {
+  const env = { ...sysEnv };
+  if (file === weztermBin) {
+    const sock = findWeztermSocket();
+    if (sock) env.WEZTERM_UNIX_SOCKET = sock;
+  }
   return new Promise((resolve) => {
-    execFile(file, args, { timeout: 4000, env: sysEnv }, (error, stdout, stderr) => {
+    execFile(file, args, { timeout: 4000, env }, (error, stdout, stderr) => {
       if (error && !silent) console.error(`[helm] ${path.basename(file)} ${args[0] || ''}:`, error.message);
       resolve({ ok: !error, error, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
     });
