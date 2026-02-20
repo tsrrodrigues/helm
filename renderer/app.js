@@ -208,7 +208,7 @@ window.helm.onStateUpdate((next) => {
   }
 
   state.data = next;
-  if (!state.inlineEditSession) render();
+  if (!state.inlineEditSession && !state.inlineEditAgent) render();
 
   // Trigger bounce on pill when a new agent starts waiting
   if (hasNewWaiting) {
@@ -552,6 +552,9 @@ async function renameSelectedAgent() {
   if (!state.selectedPane) return;
   const paneId = state.selectedPane.paneId;
 
+  // Block re-renders while waiting for AI rename
+  state.inlineEditAgent = paneId;
+
   // Visual feedback
   const row = document.querySelector(`.agent-row[data-pane="${paneId}"]`);
   const nameEl = row?.querySelector('.ar-name');
@@ -559,11 +562,13 @@ async function renameSelectedAgent() {
   if (nameEl) nameEl.textContent = 'renomeando...';
 
   const result = await window.helm.renameAgent(paneId);
+  state.inlineEditAgent = null;
   if (!result.ok) {
     console.error('[helm] rename failed:', result.error);
     if (nameEl) nameEl.textContent = prevText || '';
   }
   // On success, daemon broadcasts new state — render will pick it up
+  render();
 }
 
 // ── Manual rename agent ─────────────────────────────────────────────────────
