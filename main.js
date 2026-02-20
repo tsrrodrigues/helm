@@ -176,13 +176,9 @@ function startOverlayTracking() {
 
 // ── Pill position persistence ─────────────────────────────────────────────
 function loadPillPosition() {
-  try {
-    const data = JSON.parse(fs.readFileSync(pillPosFile, 'utf8'));
-    if (typeof data.x === 'number' && typeof data.y === 'number') return data;
-  } catch {}
-  // Fallback: top-right corner
+  // Always center horizontally at top of screen
   const { workArea } = screen.getPrimaryDisplay();
-  return { x: workArea.x + workArea.width - PILL_W - 20, y: workArea.y + 10 };
+  return { x: workArea.x + Math.round((workArea.width - PILL_W) / 2), y: workArea.y + 10 };
 }
 
 function savePillPosition(x, y) {
@@ -238,6 +234,7 @@ function computeExpandedBounds(pillX, pillY, actualPillW) {
 
 function createWindow() {
   const pos = loadPillPosition();
+  // Start collapsed at pill size
   // Start collapsed at pill size — minimal GPU/WindowServer compositing
   currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
   isExpanded = false;
@@ -274,9 +271,18 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
-  win.once('ready-to-show', () => {
+  win.once('ready-to-show', async () => {
     // Start with passthrough — renderer toggles on hover via elementFromPoint
     win.setIgnoreMouseEvents(true, { forward: true });
+    // Resize window to match actual pill width and re-center
+    try {
+      const pillW = await win.webContents.executeJavaScript("document.getElementById('pill').offsetWidth");
+      if (pillW && pillW > 0) {
+        const { workArea } = screen.getPrimaryDisplay();
+        const cx = workArea.x + Math.round((workArea.width - pillW) / 2);
+        win.setBounds({ x: cx, y: win.getBounds().y, width: pillW, height: PILL_H }, false);
+      }
+    } catch {}
     win.show();
   });
 }
@@ -417,17 +423,18 @@ ipcMain.on('expand-to-panel', (e, actualPillW) => {
 });
 
 // Collapse window to pill size (called when panel closes)
-ipcMain.on('collapse-to-pill', (e) => {
+ipcMain.on('collapse-to-pill', (e, actualPillW) => {
   if (!win || win.isDestroyed()) { e.returnValue = null; return; }
 
   const [wx, wy] = win.getPosition();
   const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
   const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
 
+  const pillW = actualPillW || PILL_W;
   currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
   isExpanded = false;
 
-  win.setBounds({ x: pillX, y: pillY, width: PILL_W, height: PILL_H }, false);
+  win.setBounds({ x: pillX, y: pillY, width: pillW, height: PILL_H }, false);
   e.returnValue = currentLayout;
 });
 

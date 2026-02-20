@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld('helm', {
   getLayout: () => ipcRenderer.sendSync('get-layout'),
   recalculateBounds: () => ipcRenderer.sendSync('recalculate-bounds'),
   expandToPanel: (pillWidth) => ipcRenderer.sendSync('expand-to-panel', pillWidth),
-  collapseToPill: () => ipcRenderer.sendSync('collapse-to-pill'),
+  collapseToPill: (pillWidth) => ipcRenderer.sendSync('collapse-to-pill', pillWidth),
   navigateToPane: (sessionName, windowName, paneId, weztermTabId) =>
     ipcRenderer.send('navigate-to-pane', sessionName, windowName, paneId, weztermTabId),
   confirmName: (sessionName, name) => ipcRenderer.send('confirm-name', sessionName, name),

@@ -41,64 +41,14 @@ document.addEventListener('mouseleave', () => {
   if (!_pillDrag) setIgnoreIfChanged(true);
 });
 
-// ── Badge drag ───────────────────────────────────────────────────────────
-const DRAG_THRESHOLD = 5;
-let _pillDrag = null;
+// ── Badge click (pill is fixed, no drag) ─────────────────────────────────
+let _pillDrag = null; // kept for setIgnoreIfChanged guard
 
-pill.addEventListener('mousedown', (e) => {
+pill.addEventListener('click', (e) => {
   if (e.button !== 0) return;
   e.preventDefault();
   setIgnoreIfChanged(false);
-
-  if (state.open) {
-    // When expanded, click closes — no drag support
-    _pillDrag = { startScreenX: e.screenX, startScreenY: e.screenY, isDragging: false, expandedClick: true };
-    return;
-  }
-
-  _pillDrag = {
-    startScreenX: e.screenX,
-    startScreenY: e.screenY,
-    isDragging: false,
-    expandedClick: false
-  };
-});
-
-document.addEventListener('mousemove', (e) => {
-  if (!_pillDrag || _pillDrag.expandedClick) return;
-  const dx = e.screenX - _pillDrag.startScreenX;
-  const dy = e.screenY - _pillDrag.startScreenY;
-
-  if (!_pillDrag.isDragging) {
-    if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
-    _pillDrag.isDragging = true;
-    _pillDrag.lastScreenX = _pillDrag.startScreenX;
-    _pillDrag.lastScreenY = _pillDrag.startScreenY;
-  }
-
-  const moveDx = e.screenX - _pillDrag.lastScreenX;
-  const moveDy = e.screenY - _pillDrag.lastScreenY;
-  _pillDrag.lastScreenX = e.screenX;
-  _pillDrag.lastScreenY = e.screenY;
-
-  window.helm.moveWindow(moveDx, moveDy);
-});
-
-document.addEventListener('mouseup', (e) => {
-  if (!_pillDrag) return;
-  const wasDragging = _pillDrag.isDragging;
-  _pillDrag = null;
-
-  if (wasDragging) {
-    // Recalculate window bounds for new pill position, then save
-    const layout = window.helm.recalculateBounds();
-    if (layout) { state.layout = layout; applyLayout(); }
-    window.helm.savePillPosition(null, null);
-  } else {
-    // Was a click, not a drag
-    togglePanel();
-  }
-  // Always restore focus to previous app after interacting with Helm
+  togglePanel();
   window.helm.refocusPreviousApp();
 });
 
@@ -377,7 +327,7 @@ function togglePanel(force) {
       render();
 
       // Collapse window to pill size — reduces GPU/WindowServer compositing area ~95%
-      const layout = window.helm.collapseToPill();
+      const layout = window.helm.collapseToPill(pill.offsetWidth);
       if (layout) { state.layout = layout; applyLayout(); }
     };
 
@@ -1342,19 +1292,16 @@ function positionSummaryConnector() {
   const agentCenterX = agentRect.left + agentRect.width / 2 - hudRect.left;
   const agentBottomY = agentRect.bottom - hudRect.top;
 
-  // Center summary under the agent's front column
-  const frontEl = agentRow.closest('.front');
-  const frontRect = frontEl.getBoundingClientRect();
-  const frontCenterX = frontRect.left + frontRect.width / 2 - hudRect.left;
-
-  const summaryWidth = 520;
-  let summaryLeft = frontCenterX - summaryWidth / 2;
-  summaryLeft = Math.max(10, Math.min(summaryLeft, hudRect.width - summaryWidth - 10));
-
+  // Position summary below panel, then center horizontally after measuring
   const summaryTop = panelRect.bottom - hudRect.top + 16;
-
-  summaryPanelEl.style.left = summaryLeft + 'px';
   summaryPanelEl.style.top = summaryTop + 'px';
+  summaryPanelEl.style.left = '0px'; // temporary — render to measure
+
+  // Measure actual rendered width and center in hud
+  const spW = summaryPanelEl.getBoundingClientRect().width;
+  let summaryLeft = Math.round((hudRect.width - spW) / 2);
+  summaryLeft = Math.max(10, Math.min(summaryLeft, hudRect.width - spW - 10));
+  summaryPanelEl.style.left = summaryLeft + 'px';
 
   // SVG covers the full hud
   const svgW = hudRect.width;
@@ -1369,7 +1316,7 @@ function positionSummaryConnector() {
   const sy = agentBottomY;
 
   // End: top-center of summary panel
-  const ex = summaryLeft + summaryWidth / 2;
+  const ex = summaryLeft + spW / 2;
   const ey = summaryTop;
 
   // S-curve control points
