@@ -427,10 +427,13 @@ ipcMain.on('collapse-to-pill', (e, actualPillW) => {
   if (!win || win.isDestroyed()) { e.returnValue = null; return; }
 
   const [wx, wy] = win.getPosition();
-  const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
   const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
 
   const pillW = actualPillW || PILL_W;
+  // Always re-center horizontally on screen (pill width may have changed during expansion)
+  const { workArea } = screen.getPrimaryDisplay();
+  const pillX = workArea.x + Math.round((workArea.width - pillW) / 2);
+
   currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
   isExpanded = false;
 
@@ -438,14 +441,13 @@ ipcMain.on('collapse-to-pill', (e, actualPillW) => {
   e.returnValue = currentLayout;
 });
 
-// Resize collapsed pill window, keeping visual center stable
+// Resize collapsed pill window, always re-centering on screen
 ipcMain.on('resize-pill', (_e, newPillW) => {
   if (!win || win.isDestroyed() || isExpanded) return;
-  const [wx, wy] = win.getPosition();
-  const [ww] = win.getSize();
-  const centerX = wx + Math.round(ww / 2);
-  const newX = centerX - Math.round(newPillW / 2);
-  win.setBounds({ x: newX, y: wy, width: newPillW, height: PILL_H }, false);
+  const { workArea } = screen.getPrimaryDisplay();
+  const cx = workArea.x + Math.round((workArea.width - newPillW) / 2);
+  const [, wy] = win.getPosition();
+  win.setBounds({ x: cx, y: wy, width: newPillW, height: PILL_H }, false);
 });
 
 ipcMain.on('move-window', (_e, dx, dy) => {
