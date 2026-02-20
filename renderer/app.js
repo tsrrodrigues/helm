@@ -786,6 +786,15 @@ function render() {
   } else {
     hideSummaryPanel();
   }
+
+  // Re-center collapsed pill when its width changes
+  if (!state.open) {
+    const newW = pill.offsetWidth;
+    if (newW > 0 && newW !== state._lastPillW) {
+      state._lastPillW = newW;
+      window.helm.resizePill(newW);
+    }
+  }
 }
 
 // ── Create area renderer ──────────────────────────────────────────────────

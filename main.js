@@ -438,6 +438,16 @@ ipcMain.on('collapse-to-pill', (e, actualPillW) => {
   e.returnValue = currentLayout;
 });
 
+// Resize collapsed pill window, keeping visual center stable
+ipcMain.on('resize-pill', (_e, newPillW) => {
+  if (!win || win.isDestroyed() || isExpanded) return;
+  const [wx, wy] = win.getPosition();
+  const [ww] = win.getSize();
+  const centerX = wx + Math.round(ww / 2);
+  const newX = centerX - Math.round(newPillW / 2);
+  win.setBounds({ x: newX, y: wy, width: newPillW, height: PILL_H }, false);
+});
+
 ipcMain.on('move-window', (_e, dx, dy) => {
   if (!win || win.isDestroyed()) return;
   const [x, y] = win.getPosition();
