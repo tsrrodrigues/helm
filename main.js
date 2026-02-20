@@ -520,6 +520,11 @@ ipcMain.handle('create-session', async (_e, name) => {
   // Start nvim in window 0
   await runFile('tmux', ['send-keys', '-t', `${safe}:0`, 'nvim', 'Enter'], true);
 
+  // Create window 1 with claude and focus on it
+  await runFile('tmux', ['new-window', '-t', safe, '-c', cwd], true);
+  await runFile('tmux', ['send-keys', '-t', `${safe}:1`, 'claude', 'Enter'], true);
+  await runFile('tmux', ['select-window', '-t', `${safe}:1`], true);
+
   // Open in WezTerm (as a new tab in the current window)
   if (weztermBin) {
     const spawnArgs = ['cli', 'spawn', '--cwd', cwd];
