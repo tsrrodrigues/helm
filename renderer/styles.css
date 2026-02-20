@@ -119,7 +119,7 @@ html, body {
 .front {
   flex: 1;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
   transition: border-color .2s, opacity .2s, transform .15s;
   cursor: pointer;
@@ -500,101 +500,61 @@ html, body {
 }
 .add-session-footer-btn:hover { color: #6c63ff; border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.06); }
 
-/* ── Focus card ──────────────────────────────────── */
-.focus-card {
-  padding: 20px 22px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.09);
-  background: rgba(255,255,255,.02);
+/* ── Summary-source highlight on agent row ────────── */
+.agent-row.summary-source {
+  background: rgba(255,165,2,.06);
+  box-shadow: inset 2px 0 0 #ffa502;
 }
-.focus-card.accent-0 { border-left: 4px solid rgba(99,179,237,.65); }
-.focus-card.accent-1 { border-left: 4px solid rgba(183,148,244,.65); }
-.focus-card.accent-2 { border-left: 4px solid rgba(104,211,145,.65); }
-.focus-card.accent-3 { border-left: 4px solid rgba(246,173,85,.65); }
-.focus-card.accent-4 { border-left: 4px solid rgba(244,114,182,.65); }
-.focus-card.accent-5 { border-left: 4px solid rgba(103,216,239,.65); }
 
-.fc-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
+/* ── SVG connector overlay ───────────────────────── */
+.connector-svg-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 90;
 }
-.fc-project {
-  font-size: 11px;
-  font-weight: 700;
-  font-family: 'SF Mono', Menlo, monospace;
-  letter-spacing: .03em;
-  text-transform: lowercase;
-}
-.focus-card.accent-0 .fc-project { color: rgba(99,179,237,.9); }
-.focus-card.accent-1 .fc-project { color: rgba(183,148,244,.9); }
-.focus-card.accent-2 .fc-project { color: rgba(104,211,145,.9); }
-.focus-card.accent-3 .fc-project { color: rgba(246,173,85,.9); }
-.focus-card.accent-4 .fc-project { color: rgba(244,114,182,.9); }
-.focus-card.accent-5 .fc-project { color: rgba(103,216,239,.9); }
 
-.fc-elapsed {
-  font-size: 11px;
-  color: #ffa502;
-  font-weight: 600;
+/* ── Summary panel ───────────────────────────────── */
+.summary-panel {
+  position: absolute;
+  pointer-events: auto;
+  background: rgba(10, 10, 20, 0.97);
+  border: 1px solid rgba(255,165,2,.35);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 12px rgba(255,165,2,0.08);
+  padding: 14px 18px;
+  max-width: 520px;
+  z-index: 91;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
 }
-.fc-task {
-  font-size: 17px;
-  font-weight: 700;
+.summary-panel.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.summary-panel.accent-0 { border-left: 4px solid rgba(99,179,237,.65); }
+.summary-panel.accent-1 { border-left: 4px solid rgba(183,148,244,.65); }
+.summary-panel.accent-2 { border-left: 4px solid rgba(104,211,145,.65); }
+.summary-panel.accent-3 { border-left: 4px solid rgba(246,173,85,.65); }
+.summary-panel.accent-4 { border-left: 4px solid rgba(244,114,182,.65); }
+.summary-panel.accent-5 { border-left: 4px solid rgba(103,216,239,.65); }
+
+.sp-summary {
+  font-size: 16px;
   color: #e0e0e0;
-  margin-bottom: 4px;
-  letter-spacing: -.01em;
+  line-height: 1.6;
 }
-.fc-agent {
-  font-size: 9px;
-  font-weight: 600;
+.sp-summary.sp-empty {
   color: #555;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 14px;
+  font-style: italic;
 }
-.fc-summary {
-  font-size: 13px;
-  color: #999;
-  line-height: 1.5;
-  margin-bottom: 12px;
-}
-.fc-prompt {
-  font-size: 12px;
-  font-family: 'SF Mono', Menlo, monospace;
-  color: #777;
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-bottom: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fc-actions {
-  display: flex;
-  gap: 8px;
-}
-.fc-btn {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(255,255,255,.1);
-  background: rgba(255,255,255,.03);
-  color: #888;
-  cursor: pointer;
-  transition: color .15s, background .15s, border-color .15s;
-}
-.fc-btn:hover { color: #ccc; background: rgba(255,255,255,.06); }
-.fc-btn.fc-go {
-  color: #6c63ff;
-  border-color: rgba(108,99,255,.3);
-  background: rgba(108,99,255,.08);
-}
-.fc-btn.fc-go:hover { background: rgba(108,99,255,.15); color: #8c85ff; }
 
 /* Discrete blink for waiting dots — body class toggle, no inline styles */
 .blink-dim .pdot.wait,

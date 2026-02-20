@@ -4,8 +4,8 @@ const state = {
   selectedPane: null,
   inlineEditSession: null,
   shortcutMode: false,
-  focusMode: false,   // true = showing single-agent focus card instead of full panel
-  focusAgent: null,    // { agent, front } for focus mode
+  focusMode: false,   // true = showing summary panel connected to waiting agent
+  focusAgent: null,    // { agent, front } for summary panel
   frontOrder: [],
   openFronts: new Set(),
   dismissedPanes: new Set(),
@@ -16,9 +16,11 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const pill     = $('pill');
-const panel    = $('panel');
-const frontsEl = $('fronts');
+const pill         = $('pill');
+const panel        = $('panel');
+const frontsEl     = $('fronts');
+const connectorSvg = $('connector-svg');
+const summaryPanelEl = $('summary-panel');
 
 // ── Mouse passthrough ─────────────────────────────────────────────────────
 // sendSync ensures cursor switches in same frame (no async lag).
@@ -330,7 +332,7 @@ function togglePanel(force) {
     state.open = true;
     panel.classList.remove('closing', 'visible');
 
-    // Check for undismissed waiting agents → enter focus mode
+    // Check for undismissed waiting agents → show summary panel
     const focusTarget = getOldestUndismissedWaiting();
     if (focusTarget) {
       state.focusMode = true;
@@ -338,13 +340,21 @@ function togglePanel(force) {
     } else {
       state.focusMode = false;
       state.focusAgent = null;
-      for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
     }
+    // Always expand all fronts when opening
+    for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
     render();
 
-    // Fade in panel on next frame
+    // Fade in panel on next frame, then position summary after transition
     requestAnimationFrame(() => {
       panel.classList.add('visible');
+      if (state.focusMode && state.focusAgent) {
+        panel.addEventListener('transitionend', function onPanelOpen(e) {
+          if (e.target !== panel) return;
+          panel.removeEventListener('transitionend', onPanelOpen);
+          positionSummaryConnector();
+        });
+      }
     });
   } else {
     // ── CLOSE — fade out panel, then collapse window ──
@@ -363,6 +373,7 @@ function togglePanel(force) {
       state.selectedPane = null;
       state.creatingSession = false;
       state.confirmingDelete = null;
+      hideSummaryPanel();
       render();
 
       // Collapse window to pill size — reduces GPU/WindowServer compositing area ~95%
@@ -815,22 +826,16 @@ function render() {
     }
   }
 
-  // Focus mode: show single-agent focus card
-  if (state.focusMode && state.focusAgent) {
-    renderFocusCard();
-    return;
-  }
-
-  // Normal mode: hide focus card, show fronts
-  const existingFocus = $('focus-card');
-  if (existingFocus) existingFocus.remove();
-  frontsEl.style.display = '';
-  $('create-area').style.display = '';
-  document.querySelector('.pf').style.display = '';
-  document.querySelector('.ph').style.display = '';
-
+  // Always show normal panel content (fronts, footer, etc.)
   reconcileFronts();
   renderCreateArea();
+
+  // Show or hide summary panel based on focus mode
+  if (state.focusMode && state.focusAgent && state.open) {
+    renderSummaryPanel();
+  } else {
+    hideSummaryPanel();
+  }
 }
 
 // ── Create area renderer ──────────────────────────────────────────────────
@@ -1212,7 +1217,8 @@ function createAgentRow(agent, front) {
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
   const isSelected = state.selectedPane?.paneId === agent.paneId;
   const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
-  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}${isSelected ? ' selected' : ''}${isConfirming ? ' confirming-delete' : ''}`;
+  const isSummarySource = state.focusMode && state.focusAgent?.agent.paneId === agent.paneId;
+  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}${isSelected ? ' selected' : ''}${isConfirming ? ' confirming-delete' : ''}${isSummarySource ? ' summary-source' : ''}`;
   row.dataset.pane = agent.paneId;
   const tag = agentTag(agent.command);
   const num = getAgentGlobalIndex(agent.paneId);
@@ -1264,10 +1270,12 @@ function patchAgentRow(row, agent, front) {
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
   const isSelected = state.selectedPane?.paneId === agent.paneId;
   const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
+  const isSummarySource = state.focusMode && state.focusAgent?.agent.paneId === agent.paneId;
   cls(row, 'is-wait', isWait);
   cls(row, 'is-dismissed', isDismissed);
   cls(row, 'selected', isSelected);
   cls(row, 'confirming-delete', isConfirming);
+  cls(row, 'summary-source', isSummarySource);
 
   const dot = row.querySelector('.ar-dot');
   if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
@@ -1294,49 +1302,117 @@ function patchAgentRow(row, agent, front) {
   }
 }
 
-// ── Focus card renderer ────────────────────────────────────────────────────
+// ── Summary panel renderer ──────────────────────────────────────────────────
 
-function renderFocusCard() {
-  // Hide normal panel content
-  frontsEl.style.display = 'none';
-  $('create-area').style.display = 'none';
-  document.querySelector('.pf').style.display = 'none';
-  document.querySelector('.ph').style.display = 'none';
-
+function renderSummaryPanel() {
   const { agent, front } = state.focusAgent;
   const accentIdx = projectColor(front.projectDir);
-  const tag = agentTag(agent.command);
-  const elapsed = formatElapsed(agent.waitingSince);
   const summary = agent.waitingSummary || '';
   const lastLine = agent.lastOutput || '';
 
-  let card = $('focus-card');
-  if (!card) {
-    card = document.createElement('div');
-    card.id = 'focus-card';
-    panel.insertBefore(card, frontsEl);
-  }
+  // Remove old accent classes and apply new
+  for (let i = 0; i < 6; i++) summaryPanelEl.classList.remove(`accent-${i}`);
+  summaryPanelEl.classList.add(`accent-${accentIdx}`);
 
-  card.className = `focus-card accent-${accentIdx}`;
-  card.innerHTML = `
-    <div class="fc-header">
-      <div class="fc-project">${escapeHtml(front.projectDir || front.sessionName)}</div>
-      <div class="fc-elapsed">${elapsed ? `esperando ${escapeHtml(elapsed)}` : 'aguardando'}</div>
-    </div>
-    <div class="fc-task">${escapeHtml(agent.task || agent.windowName)}</div>
-    <div class="fc-agent">${escapeHtml(tag)}</div>
-    ${summary ? `<div class="fc-summary">${escapeHtml(summary)}</div>` : ''}
-    ${lastLine ? `<div class="fc-prompt">${escapeHtml(lastLine)}</div>` : ''}
-    <div class="fc-actions">
-      <button class="fc-btn fc-go">Enter ir</button>
-      <button class="fc-btn fc-dismiss">x dispensar</button>
-      <button class="fc-btn fc-all">Tab ver tudo</button>
-    </div>
+  const text = summary || lastLine || '';
+
+  summaryPanelEl.innerHTML = text
+    ? `<div class="sp-summary">${escapeHtml(text)}</div>`
+    : `<div class="sp-summary sp-empty">aguardando resposta</div>`;
+
+  // Position: immediately if panel is already visible (re-render), otherwise
+  // togglePanel handles positioning after the panel open transition completes
+  if (panel.classList.contains('visible')) {
+    requestAnimationFrame(() => positionSummaryConnector());
+  }
+}
+
+function positionSummaryConnector() {
+  if (!state.focusAgent) { hideSummaryPanel(); return; }
+
+  const agentRow = document.querySelector(`.agent-row[data-pane="${state.focusAgent.agent.paneId}"]`);
+  if (!agentRow) { hideSummaryPanel(); return; }
+
+  const hudEl = document.querySelector('.hud');
+  const hudRect = hudEl.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const agentRect = agentRow.getBoundingClientRect();
+
+  // All coords relative to .hud
+  const agentCenterX = agentRect.left + agentRect.width / 2 - hudRect.left;
+  const agentBottomY = agentRect.bottom - hudRect.top;
+
+  // Center summary under the agent's front column
+  const frontEl = agentRow.closest('.front');
+  const frontRect = frontEl.getBoundingClientRect();
+  const frontCenterX = frontRect.left + frontRect.width / 2 - hudRect.left;
+
+  const summaryWidth = 520;
+  let summaryLeft = frontCenterX - summaryWidth / 2;
+  summaryLeft = Math.max(10, Math.min(summaryLeft, hudRect.width - summaryWidth - 10));
+
+  const summaryTop = panelRect.bottom - hudRect.top + 16;
+
+  summaryPanelEl.style.left = summaryLeft + 'px';
+  summaryPanelEl.style.top = summaryTop + 'px';
+
+  // SVG covers the full hud
+  const svgW = hudRect.width;
+  const svgH = hudRect.height;
+  connectorSvg.setAttribute('width', svgW);
+  connectorSvg.setAttribute('height', svgH);
+  connectorSvg.style.width = svgW + 'px';
+  connectorSvg.style.height = svgH + 'px';
+
+  // Start: bottom-center of agent row
+  const sx = agentCenterX;
+  const sy = agentBottomY;
+
+  // End: top-center of summary panel
+  const ex = summaryLeft + summaryWidth / 2;
+  const ey = summaryTop;
+
+  // S-curve control points
+  const verticalGap = ey - sy;
+  const c1x = sx;
+  const c1y = sy + verticalGap * 0.45;
+  const c2x = ex;
+  const c2y = ey - verticalGap * 0.45;
+
+  connectorSvg.innerHTML = `
+    <defs>
+      <linearGradient id="sp-line-grad" x1="0" y1="${sy}" x2="0" y2="${ey}" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="rgba(255,165,2,0.6)" />
+        <stop offset="100%" stop-color="rgba(255,165,2,0.3)" />
+      </linearGradient>
+      <filter id="sp-glow">
+        <feGaussianBlur stdDeviation="2.5" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+    </defs>
+    <path d="M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}"
+          fill="none" stroke="rgba(255,165,2,0.08)" stroke-width="10" />
+    <path d="M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}"
+          fill="none" stroke="url(#sp-line-grad)" stroke-width="2" filter="url(#sp-glow)" />
+    <circle cx="${sx}" cy="${sy}" r="4" fill="#ffa502" opacity="0.85">
+      <animate attributeName="r" values="4;5;4" dur="2s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="0.85;0.5;0.85" dur="2s" repeatCount="indefinite" />
+    </circle>
+    <circle cx="${ex}" cy="${ey}" r="4" fill="#ffa502" opacity="0.85">
+      <animate attributeName="r" values="4;5;4" dur="2s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="0.85;0.5;0.85" dur="2s" repeatCount="indefinite" />
+    </circle>
   `;
 
-  card.querySelector('.fc-go').addEventListener('click', (e) => { e.stopPropagation(); focusNavigate(); });
-  card.querySelector('.fc-dismiss').addEventListener('click', (e) => { e.stopPropagation(); focusDismiss(); });
-  card.querySelector('.fc-all').addEventListener('click', (e) => { e.stopPropagation(); exitFocusMode(); });
+  summaryPanelEl.classList.add('visible');
+}
+
+function hideSummaryPanel() {
+  summaryPanelEl.classList.remove('visible');
+  connectorSvg.innerHTML = '';
 }
 
 // ── Discrete blink for waiting dots (no CSS animation = no 60fps GPU compositing) ──
