@@ -266,6 +266,16 @@ function applyLayout() {
   panel.style.left = l.panelOffsetX + 'px';
   panel.style.top = l.panelOffsetY + 'px';
   panel.style.width = l.panelW + 'px';
+
+  // Dynamic fronts max-height: panelH minus header, footer, and padding
+  // so content grows without scroll until screen is full
+  if (l.panelH > 0) {
+    // panel padding (16+14) + header .ph (~32) + footer .pf (~44) ≈ 106
+    const frontsMaxH = l.panelH - 106;
+    frontsEl.style.maxHeight = Math.max(100, frontsMaxH) + 'px';
+  } else {
+    frontsEl.style.maxHeight = '';
+  }
 }
 
 let _animating = false;

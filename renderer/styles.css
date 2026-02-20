@@ -110,7 +110,6 @@ html, body {
   display: flex;
   gap: 9px;
   align-items: flex-start;
-  max-height: 480px;
   overflow-y: auto;
   overflow-x: hidden;
 }

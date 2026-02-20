@@ -189,7 +189,7 @@ function savePillPosition(x, y) {
 const PILL_W = 280;
 const PILL_H = 56;
 const PANEL_W = 1200;
-const PANEL_H = 620;  // fixed max — content scrolls inside
+const SUMMARY_RESERVE = 220; // space below panel for summary panel + connector
 const GAP = 8;
 let currentLayout = null;
 
@@ -204,14 +204,21 @@ function computeExpandedBounds(pillX, pillY, actualPillW) {
   // Vertical: prefer below pill, flip above if not enough space
   const spaceBelow = (workArea.y + workArea.height) - (pillY + PILL_H + GAP);
   const spaceAbove = pillY - workArea.y - GAP;
-  const panelBelow = spaceBelow >= PANEL_H || spaceBelow >= spaceAbove;
+  const panelBelow = spaceBelow >= 300 || spaceBelow >= spaceAbove;
+
+  // Dynamic panel height: use available space minus summary reserve
+  const availableSpace = panelBelow ? spaceBelow : spaceAbove;
+  const panelH = Math.max(200, availableSpace - SUMMARY_RESERVE);
 
   let winY, winH;
   if (panelBelow) {
     winY = pillY;
-    winH = PILL_H + GAP + PANEL_H;
+    winH = PILL_H + GAP + panelH + SUMMARY_RESERVE;
+    // Clamp to screen bottom
+    const maxH = (workArea.y + workArea.height) - winY;
+    winH = Math.min(winH, maxH);
   } else {
-    winY = pillY - GAP - PANEL_H;
+    winY = pillY - GAP - panelH;
     winY = Math.max(workArea.y, winY);
     winH = (pillY + PILL_H) - winY;
   }
@@ -227,7 +234,7 @@ function computeExpandedBounds(pillX, pillY, actualPillW) {
       panelOffsetX: px - winX,
       panelOffsetY: panelBelow ? (pillY + PILL_H + GAP) - winY : 0,
       panelW: PANEL_W,
-      panelH: PANEL_H
+      panelH: panelH
     }
   };
 }
@@ -236,7 +243,7 @@ function createWindow() {
   const pos = loadPillPosition();
   // Start collapsed at pill size
   // Start collapsed at pill size — minimal GPU/WindowServer compositing
-  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
   isExpanded = false;
 
   win = new BrowserWindow({
@@ -395,7 +402,7 @@ ipcMain.on('recalculate-bounds', (e) => {
 
   if (!isExpanded) {
     // Collapsed: just keep pill-sized window at current position
-    currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+    currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
     e.returnValue = currentLayout;
     return;
   }
@@ -434,7 +441,7 @@ ipcMain.on('collapse-to-pill', (e, actualPillW) => {
   const { workArea } = screen.getPrimaryDisplay();
   const pillX = workArea.x + Math.round((workArea.width - pillW) / 2);
 
-  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: PANEL_H };
+  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
   isExpanded = false;
 
   win.setBounds({ x: pillX, y: pillY, width: pillW, height: PILL_H }, false);
