@@ -158,10 +158,26 @@ const sysEnv = {
   LANG: process.env.LANG || 'en_US.UTF-8'
 };
 
+const WEZTERM_SOCK_DIR = path.join(os.homedir(), '.local', 'share', 'wezterm');
+
+function findWeztermSocket() {
+  try {
+    const entries = fs.readdirSync(WEZTERM_SOCK_DIR);
+    for (const e of entries) {
+      if (!e.startsWith('gui-sock-')) continue;
+      const pid = parseInt(e.replace('gui-sock-', ''), 10);
+      if (!pid) continue;
+      try { process.kill(pid, 0); return path.join(WEZTERM_SOCK_DIR, e); } catch {}
+    }
+  } catch {}
+  return null;
+}
+
 function execCmd(cmd, args = [], timeout = 3500) {
   const bin = cmd === 'wezterm' ? weztermBin : cmd;
+  const env = cmd === 'wezterm' ? (() => { const sock = findWeztermSocket(); return sock ? { ...sysEnv, WEZTERM_UNIX_SOCKET: sock } : sysEnv; })() : sysEnv;
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout, env: sysEnv }, (error, stdout, stderr) => {
+    execFile(bin, args, { timeout, env }, (error, stdout, stderr) => {
       if (error && cmd !== 'wezterm') console.error(`[helm] ${cmd} ${args.join(' ')}:`, error.message);
       resolve({ ok: !error, error, stdout: stdout || '', stderr: stderr || '' });
     });
@@ -609,7 +625,7 @@ async function buildState() {
       frontsMap.set(pane.sessionName, {
         name: names[pane.sessionName] || pane.sessionName,
         sessionName: pane.sessionName,
-        weztermTabId: tabMap[pane.sessionName] || null,
+        weztermTabId: tabMap[pane.sessionName] ?? null,
         aiSuggested: !!(names[pane.sessionName] && names[pane.sessionName] !== pane.sessionName && !confirmed[pane.sessionName]),
         activePaneId: null,
         agents: [],

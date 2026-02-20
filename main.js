@@ -489,7 +489,7 @@ ipcMain.on('navigate-to-pane', async (_e, sessionName, windowName, paneId, wezte
   }
 
   // Step 2: activate WezTerm tab if we have the id
-  if (weztermTabId && weztermBin) {
+  if (weztermTabId != null && weztermBin) {
     const r = await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
     console.log('[helm] activate-tab:', r.ok ? 'ok' : r.error?.message);
   }
@@ -570,7 +570,7 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
 
   // Focus the WezTerm tab and bring it to front
-  if (weztermTabId && weztermBin) {
+  if (weztermTabId != null && weztermBin) {
     await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
   }
   await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
@@ -585,7 +585,7 @@ ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath
   // Send the fork command to the new window's shell
   await runFile('tmux', ['send-keys', '-t', sessionName, `claude --resume ${claudeSessionId} --fork-session`, 'Enter']);
   // Focus WezTerm tab and bring to front
-  if (weztermTabId && weztermBin) {
+  if (weztermTabId != null && weztermBin) {
     await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
   }
   await runFile('osascript', ['-e', 'tell application "WezTerm" to activate'], true);
