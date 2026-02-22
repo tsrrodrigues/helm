@@ -974,6 +974,8 @@ async function handleRequest(req, res) {
     '/sw.js': { file: 'sw.js', type: 'application/javascript' },
     '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
     '/icon-512.png': { file: 'icon-512.png', type: 'image/png' },
+    '/icon-badge-96.png': { file: 'icon-badge-96.png', type: 'image/png' },
+    '/icon-badge-192.png': { file: 'icon-badge-192.png', type: 'image/png' },
   };
   const staticEntry = req.method === 'GET' && STATIC_FILES[req.url];
   if (staticEntry) {
