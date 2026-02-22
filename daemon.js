@@ -814,18 +814,7 @@ const https = require('https');
 const wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
 console.log(`[helm] WS on :${PORT} (Electron/local)`);
 
-let wssSecure = null;
-try {
-  const wsCert = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
-  const wsKey = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
-  const wssServer = https.createServer({ cert: wsCert, key: wsKey });
-  wssSecure = new WebSocket.Server({ server: wssServer });
-  wssServer.listen(7375, '0.0.0.0');
-  wssSecure.on('connection', (ws) => ws.send(cachedStateJson));
-  console.log(`[helm] WSS on :7375 (mobile/TLS)`);
-} catch (e) {
-  console.log(`[helm] WSS not available: ${e.message}`);
-}
+let wssSecure = null; // attached to HTTPS server below
 
 wss.on('connection', (ws) => ws.send(cachedStateJson));
 
@@ -863,7 +852,10 @@ try {
   const cert = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
   const key = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
   httpServer = https.createServer({ cert, key }, handleRequest);
-  console.log('[helm] HTTPS enabled with Tailscale cert');
+  // Attach WSS to same HTTPS server (mobile connects to wss://host:7374/ws)
+  wssSecure = new WebSocket.Server({ server: httpServer, path: '/ws' });
+  wssSecure.on('connection', (ws) => ws.send(cachedStateJson));
+  console.log('[helm] HTTPS + WSS enabled on :7374');
 } catch (e) {
   httpServer = http.createServer(handleRequest);
   console.log('[helm] HTTPS certs not found, falling back to HTTP');

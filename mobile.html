@@ -446,7 +446,7 @@ html, body {
 // ── Config ──────────────────────────────────────────
 const _host = location.hostname || 'localhost';
 const _secure = location.protocol === 'https:';
-const WS_URL = _secure ? `wss://${_host}:7375` : `ws://${_host}:7373`;
+const WS_URL = _secure ? `wss://${_host}:7374/ws` : `ws://${_host}:7373`;
 const API_URL = `${location.protocol}//${_host}:7374`;
 console.log('[helm-mobile] proto:', location.protocol, 'host:', _host, 'WS:', WS_URL, 'API:', API_URL);
 document.title = 'Helm · ' + WS_URL;
