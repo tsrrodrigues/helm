@@ -448,6 +448,7 @@ const _host = location.hostname || 'localhost';
 const _secure = location.protocol === 'https:';
 const WS_URL = `${_secure ? 'wss' : 'ws'}://${_host}:7373`;
 const API_URL = `${location.protocol}//${_host}:7374`;
+console.log('[helm-mobile] proto:', location.protocol, 'host:', _host, 'WS:', WS_URL, 'API:', API_URL);
 
 // ── State ───────────────────────────────────────────
 const state = {
@@ -808,13 +809,18 @@ function connect() {
         updateTerminalView();
       } catch {}
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       state.connected = false;
       connEl.textContent = 'offline';
       connEl.className = 'conn-status disconnected';
+      console.log('[helm-mobile] WS closed:', e.code, e.reason);
       setTimeout(connect, 3000);
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = (e) => {
+      console.log('[helm-mobile] WS error:', e);
+      connEl.textContent = 'erro ws';
+      ws.close();
+    };
   } catch {
     state.data = DEMO_DATA;
     renderList();
