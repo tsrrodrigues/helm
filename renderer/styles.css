@@ -68,6 +68,23 @@ html, body {
   border-left: 1px solid rgba(255,255,255,.08); padding-left: 10px;
 }
 .pill-badges:empty { display: none; }
+
+/* ── Active glyph — shows which agent is in the current terminal ── */
+.active-glyph {
+  position: absolute;
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  display: none; align-items: center; justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+.active-glyph.visible { display: flex; }
+.active-glyph.g-0 { background: rgba(99,179,237,.2); color: #7ec8f5; }
+.active-glyph.g-1 { background: rgba(183,148,244,.2); color: #cdb4fa; }
+.active-glyph.g-2 { background: rgba(104,211,145,.2); color: #8ae4a8; }
+.active-glyph.g-3 { background: rgba(251,191,36,.2); color: #fcd34d; }
+.active-glyph.g-4 { background: rgba(244,114,182,.2); color: #f9a8d4; }
+.active-glyph.g-5 { background: rgba(103,216,239,.2); color: #7ee8f5; }
 .pill-badge {
   width: 22px; height: 22px; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
@@ -126,19 +143,21 @@ html, body {
 .hint { font-size: 12px; color: #8c85ff; }
 
 /* ── Rows (flat agent list) ───────────────────────── */
-.rows { display: flex; flex-direction: column; }
+.rows { display: flex; flex-direction: column; gap: 2px; }
 .row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 16px; cursor: pointer; transition: background .12s;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; cursor: pointer; transition: background .12s;
   border-left: 3px solid transparent;
-  border-bottom: 1px solid rgba(255,255,255,.03);
+  border-radius: 6px;
+  margin: 0 6px;
 }
-.row:last-child { border-bottom: none; }
 .row *, .row *::before, .row *::after { cursor: pointer !important; }
-.row:hover { background: rgba(255,255,255,.025); }
-.row.is-wait { background: rgba(255,165,2,.025); }
-.row.is-wait:hover { background: rgba(255,165,2,.05); }
-.row-div { height: 1px; background: rgba(255,255,255,.03); margin: 0 16px; }
+.row { opacity: .45; }
+.row:hover { background: rgba(255,255,255,.03); opacity: .7; }
+.row.is-wait { background: rgba(255,165,2,.02); opacity: 1; }
+.row.is-wait:hover { background: rgba(255,165,2,.045); }
+.row.selected { opacity: 1; }
+.row-div { display: none; }
 
 /* Color tint bands — subtle project background */
 .row.tint-0 { background: rgba(99,179,237,.02); }
@@ -176,7 +195,7 @@ html, body {
 .row.selected.is-wait { background: rgba(108, 99, 255, 0.08); }
 
 /* Expanded row */
-.row.expanded { background: rgba(255,255,255,.015) !important; border-left-width: 3px; }
+.row.expanded { background: rgba(255,255,255,.02) !important; }
 .row.expanded.accent-0 { border-left-color: rgba(99,179,237,1) !important; }
 .row.expanded.accent-1 { border-left-color: rgba(183,148,244,1) !important; }
 .row.expanded.accent-2 { border-left-color: rgba(104,211,145,1) !important; }
@@ -186,24 +205,37 @@ html, body {
 
 /* ── Glyph badge ──────────────────────────────────── */
 .glyph {
-  width: 32px; height: 32px;
-  border-radius: 8px;
+  width: 40px; height: 40px;
+  border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
+  font-size: 20px;
   flex-shrink: 0;
   position: relative;
 }
-.glyph.g-0 { background: rgba(99,179,237,.12); color: #63b3ed; }
-.glyph.g-1 { background: rgba(183,148,244,.12); color: #b794f4; }
-.glyph.g-2 { background: rgba(104,211,145,.12); color: #68d391; }
-.glyph.g-3 { background: rgba(251,191,36,.12); color: #fbbf24; }
-.glyph.g-4 { background: rgba(244,114,182,.12); color: #f687b3; }
-.glyph.g-5 { background: rgba(103,216,239,.12); color: #67d8ef; }
+.glyph.g-0 { background: rgba(99,179,237,.18); color: #7ec8f5; }
+.glyph.g-1 { background: rgba(183,148,244,.18); color: #cdb4fa; }
+.glyph.g-2 { background: rgba(104,211,145,.18); color: #8ae4a8; }
+.glyph.g-3 { background: rgba(251,191,36,.18); color: #fcd34d; }
+.glyph.g-4 { background: rgba(244,114,182,.18); color: #f9a8d4; }
+.glyph.g-5 { background: rgba(103,216,239,.18); color: #7ee8f5; }
+
+/* Shortcut number badge on glyph */
+.glyph .g-num {
+  position: absolute; top: -4px; left: -4px;
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  background: rgba(255,255,255,.08);
+  font-size: 9px; font-weight: 700; color: #666;
+  font-family: 'SF Mono','Menlo',monospace;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.row.selected .glyph .g-num { background: rgba(108,99,255,.25); color: #a89fff; }
 
 /* Status dot on glyph */
 .glyph .sdot {
   position: absolute; bottom: -2px; right: -2px;
-  width: 9px; height: 9px; border-radius: 50%;
+  width: 10px; height: 10px; border-radius: 50%;
   border: 2px solid #0e0e1a;
 }
 .glyph .sdot.run  { background: #2ed573; }
@@ -228,6 +260,7 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.02em;
 }
 .row.is-wait .r-output { color: #666; }
+.row.expanded .r-output { display: none; }
 .r-output .ch { margin-right: 3px; }
 .r-output .ch.wait { color: #b07820; }
 .r-output .ch.run  { color: #3a3a5a; }
@@ -259,7 +292,7 @@ html, body {
 
 .response-card {
   display: none;
-  margin-top: 8px;
+  margin-top: 10px;
   animation: rc-in 150ms ease-out;
 }
 .row.expanded .response-card { display: block; }
@@ -267,41 +300,40 @@ html, body {
 
 /* ── Hero section (headline / question) ─────────── */
 .rc-hero {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   position: relative;
 }
 /* Question hero — warm accent */
 .rc-hero.question {
-  background: rgba(255,165,2,.06);
-  border: 1px solid rgba(255,165,2,.15);
+  background: rgba(255,165,2,.05);
 }
 .rc-hero.question .rc-hero-label {
   font-size: 9px; text-transform: uppercase; letter-spacing: .1em;
   color: #b07820; font-weight: 700; margin-bottom: 6px;
 }
 .rc-hero.question .rc-hero-text {
-  font-size: 13px; font-weight: 600; color: #e0c090; line-height: 1.4;
+  font-size: 13px; font-weight: 600; color: #e0c090; line-height: 1.6;
+  white-space: pre-line;
 }
 
 /* Response hero — neutral/blue */
 .rc-hero.response {
-  background: rgba(99,179,237,.04);
-  border: 1px solid rgba(99,179,237,.1);
+  background: rgba(99,179,237,.03);
 }
 .rc-hero.response .rc-hero-label {
   font-size: 9px; text-transform: uppercase; letter-spacing: .1em;
   color: #4a7a9a; font-weight: 700; margin-bottom: 6px;
 }
 .rc-hero.response .rc-hero-text {
-  font-size: 13px; font-weight: 600; color: #b0cfe0; line-height: 1.4;
+  font-size: 13px; font-weight: 600; color: #b0cfe0; line-height: 1.6;
+  white-space: pre-line;
 }
 
 /* Permission hero — red/danger */
 .rc-hero.permission {
-  background: rgba(239,68,68,.05);
-  border: 1px solid rgba(239,68,68,.15);
+  background: rgba(239,68,68,.04);
 }
 .rc-hero.permission .rc-hero-label {
   font-size: 9px; text-transform: uppercase; letter-spacing: .1em;
@@ -311,26 +343,25 @@ html, body {
   font-size: 11px; font-family: 'SF Mono','Menlo',monospace;
   color: #e08080; background: rgba(0,0,0,.3);
   border-radius: 5px; padding: 6px 10px; line-height: 1.4;
-  border: 1px solid rgba(239,68,68,.1);
 }
 
 /* ── Option cards (multiple choice) ─────────────── */
 .rc-options {
-  display: flex; gap: 8px; margin-bottom: 8px;
+  display: flex; gap: 8px; margin-bottom: 10px;
   flex-wrap: wrap;
 }
 .rc-option {
   flex: 1; min-width: 120px;
   background: rgba(255,255,255,.025);
-  border: 1px solid rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.04);
   border-radius: 8px;
   padding: 10px 12px;
   cursor: pointer;
   transition: all .15s;
 }
 .rc-option:hover {
-  background: rgba(255,255,255,.06);
-  border-color: rgba(255,255,255,.15);
+  background: rgba(255,255,255,.055);
+  border-color: rgba(255,255,255,.1);
   transform: translateY(-1px);
 }
 .rc-option:active {
@@ -371,38 +402,33 @@ html, body {
 .rc-option.selected .opt-label::after { content: ' \2713'; }
 
 /* Permission card option variants */
-.rc-option.rc-approve { border-color: rgba(46,213,115,.15); }
-.rc-option.rc-approve:hover { border-color: rgba(46,213,115,.4); background: rgba(46,213,115,.06); }
+.rc-option.rc-approve { background: rgba(46,213,115,.04); }
+.rc-option.rc-approve:hover { background: rgba(46,213,115,.08); border-color: rgba(46,213,115,.2); }
 .rc-option.rc-approve .opt-label { color: #68d391; }
-.rc-option.rc-deny { border-color: rgba(224,80,80,.12); }
-.rc-option.rc-deny:hover { border-color: rgba(224,80,80,.3); background: rgba(224,80,80,.05); }
+.rc-option.rc-deny { background: rgba(224,80,80,.03); }
+.rc-option.rc-deny:hover { background: rgba(224,80,80,.07); border-color: rgba(224,80,80,.2); }
 .rc-option.rc-deny .opt-label { color: #e05050; }
 
 /* Command display in permission cards */
 .rc-command {
   margin-top: 6px; padding: 6px 10px;
-  background: rgba(0,0,0,.3); border-radius: 5px;
+  background: rgba(0,0,0,.25); border-radius: 5px;
   font-family: 'SF Mono','Menlo',monospace;
   font-size: 11px; color: #aaa; overflow-x: auto;
-  border: 1px solid rgba(255,255,255,.04);
 }
 
 /* ── Context section (keywords + KPIs) ──────────── */
 .rc-context {
-  background: rgba(255,255,255,.015);
-  border: 1px solid rgba(255,255,255,.04);
-  border-radius: 7px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  padding: 6px 0;
+  margin-bottom: 10px;
 }
 .rc-keywords {
-  display: flex; flex-wrap: wrap; gap: 4px;
-  margin-bottom: 6px;
+  display: flex; flex-wrap: wrap; gap: 5px;
 }
 .rc-kw {
-  display: inline-block; padding: 1px 6px; border-radius: 4px;
-  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06);
-  font-size: 10px; font-weight: 600; color: #888;
+  display: inline-block; padding: 2px 7px; border-radius: 4px;
+  background: rgba(255,255,255,.04);
+  font-size: 10px; font-weight: 600; color: #777;
   font-family: 'SF Mono','Menlo',monospace;
 }
 
@@ -431,21 +457,21 @@ html, body {
 }
 .rc-btn {
   font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 6px;
-  border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03);
-  color: #777; cursor: pointer; transition: all .12s;
+  border: none; background: rgba(255,255,255,.04);
+  color: #666; cursor: pointer; transition: all .12s;
   display: flex; align-items: center; gap: 4px;
 }
-.rc-btn:hover { color: #ccc; background: rgba(255,255,255,.06); }
+.rc-btn:hover { color: #bbb; background: rgba(255,255,255,.07); }
 .rc-btn.primary {
-  color: #6c63ff; border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.08);
+  color: #8c85ff; background: rgba(108,99,255,.1);
 }
-.rc-btn.primary:hover { background: rgba(108,99,255,.15); }
+.rc-btn.primary:hover { background: rgba(108,99,255,.18); }
 .rc-btn.approve {
-  color: #2ed573; border-color: rgba(46,213,115,.3); background: rgba(46,213,115,.08);
+  color: #2ed573; background: rgba(46,213,115,.08);
 }
 .rc-btn.approve:hover { background: rgba(46,213,115,.15); }
 .rc-btn.deny {
-  color: #e05050; border-color: rgba(224,80,80,.2); background: rgba(224,80,80,.05);
+  color: #e05050; background: rgba(224,80,80,.05);
 }
 .rc-btn.deny:hover { background: rgba(224,80,80,.12); }
 
@@ -462,10 +488,10 @@ html, body {
 .rc-write.visible { display: block; }
 .rc-write-input {
   width: 100%;
-  background: rgba(0,0,0,.3);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 6px;
-  padding: 8px 12px;
+  background: rgba(0,0,0,.25);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
   font-size: 12px; color: #ccc;
   font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
   outline: none;
@@ -474,7 +500,7 @@ html, body {
   line-height: 1.4;
 }
 .rc-write-input::placeholder { color: #444; }
-.rc-write-input:focus { border-color: rgba(108,99,255,.4); }
+.rc-write-input:focus { box-shadow: 0 0 0 1px rgba(108,99,255,.35); }
 .rc-write-submit {
   display: flex; justify-content: flex-end; margin-top: 6px;
 }
@@ -547,9 +573,8 @@ html, body {
 .pf {
   display: flex;
   gap: 16px;
-  margin-top: 13px;
-  padding: 11px 16px 0;
-  border-top: 1px solid rgba(255,255,255,.05);
+  margin-top: 14px;
+  padding: 12px 18px 0;
 }
 .pfi { font-size: 13px; color: #444; }
 .pfi strong { color: #666; }
@@ -609,7 +634,7 @@ html, body {
 
 /* ── Blink & animations ───────────────────────────── */
 .blink-dim .pdot.wait,
-.blink-dim .sdot.wait { opacity: 0.3; }
+.blink-dim .sdot.wait { opacity: 1; }
 
 @keyframes pill-bounce {
   0%   { transform: translateY(0); }

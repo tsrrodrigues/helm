@@ -187,7 +187,7 @@ function savePillPosition(x, y) {
 
 // ── Window ────────────────────────────────────────────────────────────────
 const PILL_W = 280;
-const PILL_H = 56;
+const PILL_H = 98; // pill (42) + active glyph (34) + gap (6) + padding (16)
 const PANEL_W = 1200;
 const SUMMARY_RESERVE = 220; // space below panel for summary panel + connector
 const GAP = 8;

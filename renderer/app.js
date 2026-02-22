@@ -18,6 +18,7 @@ const pill       = $('pill');
 const panel      = $('panel');
 const rowsEl     = $('rows');
 const pillBadgesEl = $('pill-badges');
+const activeGlyphEl = $('active-glyph');
 
 // Curated glyph set — high-contrast Unicode symbols for agent badges
 const GLYPHS = ['⚙', '⚡', '◆', '★', '■', '△', '⚒', '☷', '✦', '✱'];
@@ -235,6 +236,13 @@ window.helm.onStateUpdate((next) => {
   }
 
   state.data = next;
+
+  // Clear override when daemon catches up to the same active pane
+  if (_activePaneOverride && next.activePane === _activePaneOverride) {
+    _activePaneOverride = null;
+    clearTimeout(_activePaneOverrideTimer);
+  }
+
   if (!state.inlineEditSession && !state.inlineEditAgent) render();
 
   // Trigger bounce on pill when a new agent starts waiting
@@ -373,8 +381,24 @@ function resizeToContent() {
   // No-op: window is always at expanded size, panel scrolls internally
 }
 
+// Override for active pane — set by Helm navigation, cleared when daemon catches up
+let _activePaneOverride = null;
+let _activePaneOverrideTimer = null;
+
+function setActivePaneOverride(paneId) {
+  _activePaneOverride = paneId;
+  clearTimeout(_activePaneOverrideTimer);
+  // Keep override for 15s — daemon should catch up within one poll cycle (5s)
+  _activePaneOverrideTimer = setTimeout(() => { _activePaneOverride = null; }, 15000);
+}
+
+function getActivePane() {
+  return _activePaneOverride || state.data.activePane;
+}
+
 function navigateTo(agent) {
   state.dismissedPanes.add(agent.paneId);
+  setActivePaneOverride(agent.paneId);
   window.helm.navigateToPane(agent.sessionName, agent.windowName, agent.paneId, agent.weztermTabId);
   render();
 }
@@ -399,6 +423,13 @@ function setText(el, text) { if (el && el.textContent !== text) el.textContent =
 
 function escapeHtml(text) {
   return String(text || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+// Format bullet points: ensure each • starts on its own line
+function formatBullets(text) {
+  const escaped = escapeHtml(text);
+  // Put each bullet on its own line (handle inline bullets like "• foo • bar")
+  return escaped.replace(/\s*•\s*/g, '\n• ').trim();
 }
 
 // Simple hash → accent index (0-5), deterministic per project name
@@ -603,14 +634,20 @@ function manualRenameAgent() {
   const finish = (name) => {
     if (done) return;
     done = true;
-    state.inlineEditAgent = null;
     input.removeEventListener('keydown', onKey);
     input.removeEventListener('blur', onBlur);
     taskEl.textContent = name || currentName;
     if (name && name !== currentName) {
-      window.helm.manualRenameAgent(paneId, name).catch(err =>
-        console.error('[helm] manual rename failed:', err)
-      );
+      // Keep inlineEditAgent locked until daemon confirms the new name
+      // (prevents patchAgentRowV5 from overwriting with the old name)
+      window.helm.manualRenameAgent(paneId, name).then(() => {
+        state.inlineEditAgent = null;
+      }).catch(err => {
+        console.error('[helm] manual rename failed:', err);
+        state.inlineEditAgent = null;
+      });
+    } else {
+      state.inlineEditAgent = null;
     }
   };
 
@@ -780,16 +817,21 @@ function render() {
   pill.className = effectiveWaiting > 0 ? 'pill has-waiting' : 'pill all-ok';
   if (wasNudge && effectiveWaiting > 0) pill.classList.add('pill-nudge');
 
-  // Pill dots
+  // Pill dots — one per agent, in listing order, matching agent status
   const dots = [];
-  const runCount = Math.min(4, state.data.summary?.totalAgents || 0);
-  const waitCount = Math.min(2, effectiveWaiting);
-  for (let i = 0; i < waitCount; i++) dots.push('<div class="pdot wait"></div>');
-  for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      const isWait = a.status === 'waiting' && !state.dismissedPanes.has(a.paneId);
+      dots.push(`<div class="pdot ${isWait ? 'wait' : 'run'}"></div>`);
+    }
+  }
   $('pill-dots').innerHTML = dots.join('');
 
   // Pill badges — mini glyphs of waiting agents
   renderPillBadges();
+
+  // Active glyph — shows which agent is in the current terminal
+  renderActiveGlyph();
 
   setText($('sum-fronts'), String(state.data.summary?.total || 0));
   setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
@@ -861,6 +903,46 @@ function renderPillBadges() {
   pillBadgesEl.innerHTML = badges.join('');
 }
 
+// ── Active glyph renderer ────────────────────────────────────────────────
+
+function renderActiveGlyph() {
+  const activePane = getActivePane();
+  if (!activePane) {
+    activeGlyphEl.classList.remove('visible');
+    return;
+  }
+
+  // Find the agent and front for the active pane
+  let activeAgent = null;
+  let activeFront = null;
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.paneId === activePane) { activeAgent = a; activeFront = f; break; }
+    }
+    if (activeAgent) break;
+  }
+
+  if (!activeAgent || !activeFront) {
+    activeGlyphEl.classList.remove('visible');
+    return;
+  }
+
+  const colorIdx = projectColor(activeFront.projectDir);
+  const glyph = glyphForAgent(activeAgent.paneId);
+
+  // Update class and content
+  for (let i = 0; i < 6; i++) cls(activeGlyphEl, `g-${i}`, i === colorIdx);
+  activeGlyphEl.textContent = glyph;
+  activeGlyphEl.classList.add('visible');
+
+  // Position centered below the pill
+  requestAnimationFrame(() => {
+    const pillRect = pill.getBoundingClientRect();
+    activeGlyphEl.style.left = (pillRect.left + pillRect.width / 2 - activeGlyphEl.offsetWidth / 2) + 'px';
+    activeGlyphEl.style.top = (pillRect.bottom + 6) + 'px';
+  });
+}
+
 // ── Flat rows reconciler ─────────────────────────────────────────────────
 
 function reconcileRows() {
@@ -930,8 +1012,11 @@ function createAgentRowV5(agent, front) {
     : (agent.lastOutput || 'trabalhando...');
   const confirmType = state.confirmingDelete?.type === 'session' ? 'sessão' : 'window';
 
+  const agentNum = getAgentGlobalIndex(agent.paneId);
+  const numBadge = agentNum ? `<span class="g-num">${agentNum}</span>` : '';
+
   row.innerHTML = `
-    <div class="glyph g-${colorIdx}">${glyph}<span class="sdot ${sdotClass}"></span></div>
+    <div class="glyph g-${colorIdx}">${numBadge}${glyph}<span class="sdot ${sdotClass}"></span></div>
     <div class="r-body">
       <div class="r-main">
         <span class="r-project c-${colorIdx}">${escapeHtml(projectName)}</span>
@@ -999,6 +1084,18 @@ function patchAgentRowV5(row, agent, front) {
   const glyphEl = row.querySelector('.glyph');
   if (glyphEl) {
     for (let i = 0; i < 6; i++) cls(glyphEl, `g-${i}`, i === colorIdx);
+  }
+
+  // Update shortcut number
+  const numEl = row.querySelector('.g-num');
+  const agentNum = getAgentGlobalIndex(agent.paneId);
+  if (numEl) {
+    setText(numEl, agentNum ? String(agentNum) : '');
+  } else if (agentNum && glyphEl) {
+    const span = document.createElement('span');
+    span.className = 'g-num';
+    span.textContent = String(agentNum);
+    glyphEl.insertBefore(span, glyphEl.firstChild);
   }
 
   // Update status dot
@@ -1080,17 +1177,14 @@ function renderResponseCard(cardEl, agent, front) {
     if (rc.type === 'question' && rc.options?.length) {
       heroHtml = `
         <div class="rc-hero question">
-          <div class="rc-hero-label">pergunta</div>
-          <div class="rc-hero-text">${escapeHtml(rc.hero || 'Escolha uma opção')}</div>
+          <div class="rc-hero-text">${formatBullets(rc.hero || 'Escolha uma opção')}</div>
         </div>
       `;
-      const isLast = (i) => i === rc.options.length - 1;
       optionsHtml = `<div class="rc-options">
         ${rc.options.map((opt, i) => `
           <div class="rc-option" data-option-idx="${i}" data-option-text="${escapeHtml(opt.label)}">
             <span class="opt-num">${i + 1}</span>
             <span class="opt-label">${escapeHtml(opt.label)}</span>
-            ${opt.tags?.length ? `<span class="opt-tags">${opt.tags.map(t => `<span class="rc-kw">${escapeHtml(t)}</span>`).join('')}</span>` : ''}
           </div>
         `).join('')}
       </div>`;
@@ -1113,52 +1207,34 @@ function renderResponseCard(cardEl, agent, front) {
         </div>
       </div>`;
     } else {
-      // type === 'response' or unknown
+      // type === 'response'
       heroHtml = `
         <div class="rc-hero response">
-          <div class="rc-hero-label">resposta</div>
-          <div class="rc-hero-text">${escapeHtml(rc.hero || summary || 'Trabalhando...')}</div>
+          <div class="rc-hero-text">${formatBullets(rc.hero || summary || 'Trabalhando...')}</div>
         </div>
       `;
     }
 
-    // Keywords from structured data
-    if (rc.keywords?.length) {
-      contextHtml = `<div class="rc-context"><div class="rc-keywords">
-        ${rc.keywords.map(kw => `<span class="rc-kw">${escapeHtml(kw)}</span>`).join('')}
-      </div></div>`;
-    }
-
-    // KPIs from structured data
+    // KPIs from structured data (no keywords — already visible in r-output)
     if (rc.kpis?.length) {
       kpisHtml = `<div class="rc-kpis">
         ${rc.kpis.map(k => `<span class="rc-kpi ${k.color || ''}"><span class="kpi-num">${escapeHtml(k.num)}</span><span class="kpi-label">${escapeHtml(k.label)}</span></span>`).join('')}
       </div>`;
     }
   } else {
-    // ── Fallback: no structured data — use summary/lastOutput ──
-    const keywords = extractKeywords(summary);
-
+    // ── Fallback: no structured data ──
     if (isWait) {
       heroHtml = `
         <div class="rc-hero question">
-          <div class="rc-hero-label">aguardando resposta</div>
-          <div class="rc-hero-text">${escapeHtml(summary || 'Aguardando sua interação')}</div>
+          <div class="rc-hero-text">${formatBullets(summary || 'Aguardando sua interação')}</div>
         </div>
       `;
     } else {
       heroHtml = `
         <div class="rc-hero response">
-          <div class="rc-hero-label">${agent.lastOutput ? 'último output' : 'em progresso'}</div>
-          <div class="rc-hero-text">${escapeHtml(summary || 'Trabalhando...')}</div>
+          <div class="rc-hero-text">${formatBullets(summary || 'Trabalhando...')}</div>
         </div>
       `;
-    }
-
-    if (keywords.length > 0) {
-      contextHtml = `<div class="rc-context"><div class="rc-keywords">
-        ${keywords.map(kw => `<span class="rc-kw">${escapeHtml(kw)}</span>`).join('')}
-      </div></div>`;
     }
   }
 
