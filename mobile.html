@@ -985,6 +985,9 @@ function formatTermOutput(raw) {
 let termRefreshInterval = null;
 async function refreshTerminal() {
   if (!state.terminalPane) return;
+  // Skip refresh if user has text selected (don't kill their selection)
+  const sel = window.getSelection();
+  if (sel && sel.toString().length > 0) return;
   try {
     const r = await fetch(API_URL + '/pane-output?paneId=' + encodeURIComponent(state.terminalPane));
     if (!r.ok) return;
