@@ -367,6 +367,26 @@ html, body {
 .term-output .t-prompt { color: var(--accent-purple); font-weight: 700; display: block; margin-top: 8px; }
 .term-output .t-activity { color: #63b3ed; }
 .term-output .t-test-pass { color: #2ed573; padding-left: 8px; }
+/* Flowchart (converted from ASCII art) */
+.t-flow {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0; margin: 8px 0; padding: 8px 0;
+}
+.t-flow-box {
+  padding: 8px 16px;
+  background: rgba(108,99,255,.08);
+  border: 1px solid rgba(108,99,255,.25);
+  border-radius: 8px;
+  color: #ddd; font-size: 13px; font-weight: 600;
+  text-align: center;
+  max-width: 90%;
+  word-break: break-word;
+}
+.t-flow-arrow {
+  color: #555; font-size: 12px; padding: 4px 0;
+  display: flex; align-items: center; gap: 4px;
+}
+
 /* Table rows (converted from ASCII tables) */
 .t-table-row {
   display: flex; flex-direction: column; gap: 2px;
@@ -789,6 +809,52 @@ function parseAsciiTable(lines) {
   return html;
 }
 
+function parseAsciiFlowchart(lines) {
+  // Extract box contents from ASCII art flowcharts
+  // Boxes: ┌──┐ │text│ └──┘ or +--+ |text| +--+
+  const boxes = [];
+  const arrows = []; // arrow labels between boxes
+  
+  for (const line of lines) {
+    const t = line.trim();
+    // Skip border/arrow-only lines
+    if (/^[┌┬┐├┼┤└┴┘─│+\-|=\s►▶→←▼▲↓↑╭╮╰╯╔╗╚╝═║]*$/.test(t) && !/[a-zA-Z0-9À-ú]/.test(t)) continue;
+    
+    // Extract text from box lines: │ text │ or | text |
+    const boxMatch = t.match(/[│|]\s*(.+?)\s*[│|]/);
+    if (boxMatch) {
+      const content = boxMatch[1].trim();
+      // Skip if it's just dashes or arrows
+      if (content && !/^[-─═>►▶→←]+$/.test(content)) {
+        // Avoid duplicates (multi-line boxes)
+        if (!boxes.length || boxes[boxes.length - 1] !== content) {
+          boxes.push(content);
+        }
+      }
+      continue;
+    }
+    
+    // Arrow labels (text between boxes, like "──▶ label" or just text on arrow lines)
+    const arrowLabel = t.replace(/[─━═►▶→←▼▲↓↑|│┌┐└┘+\-]/g, '').trim();
+    if (arrowLabel && arrowLabel.length > 1 && arrowLabel.length < 40) {
+      arrows.push(arrowLabel);
+    }
+  }
+  
+  if (boxes.length < 2) return null;
+  
+  let html = '<div class="t-flow">';
+  boxes.forEach((box, i) => {
+    html += `<div class="t-flow-box">${esc(box)}</div>`;
+    if (i < boxes.length - 1) {
+      const label = arrows[i] || '';
+      html += `<div class="t-flow-arrow">${label ? esc(label) + ' ' : ''}↓</div>`;
+    }
+  });
+  html += '</div>';
+  return html;
+}
+
 function formatTermOutput(raw) {
   const clean = stripAnsi(raw);
   const allLines = clean.split('\n');
@@ -825,6 +891,16 @@ function formatTermOutput(raw) {
   let result = '';
   for (const chunk of chunks) {
     if (chunk.type === 'table') {
+      // Check if it's a flowchart (has arrows: ►▶→── connecting boxes)
+      const joined = chunk.content.join('\n');
+      const hasArrows = /[►▶→←]|──+[>►▶]|──+\s*\n/.test(joined);
+      const hasMultipleBoxes = (joined.match(/[┌╭╔+]\s*[─━═\-]/g) || []).length >= 2;
+      
+      if (hasArrows || hasMultipleBoxes) {
+        const flowHtml = parseAsciiFlowchart(chunk.content);
+        if (flowHtml) { result += flowHtml; continue; }
+      }
+      
       const tableHtml = parseAsciiTable(chunk.content);
       if (tableHtml) { result += tableHtml; continue; }
     }
