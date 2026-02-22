@@ -351,14 +351,30 @@ html, body {
   font-size: 14px; color: #bbb; line-height: 1.6;
   white-space: pre-wrap; word-break: break-word;
 }
-/* Basic ANSI-ish styling for demo */
-.term-output .t-dim { color: #555; }
-.term-output .t-green { color: #2ed573; }
-.term-output .t-blue { color: #63b3ed; }
-.term-output .t-orange { color: #ffa502; }
-.term-output .t-red { color: #e05050; }
-.term-output .t-bold { font-weight: 700; color: #eee; }
-.term-output .t-prompt { color: var(--accent-purple); font-weight: 700; }
+/* Terminal syntax highlighting */
+.term-output .t-dim { color: #444; }
+.term-output .t-section {
+  color: #fff; font-weight: 700;
+  display: block; margin: 8px 0 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.term-output .t-success { color: #2ed573; }
+.term-output .t-error { color: #ff4757; font-weight: 600; }
+.term-output .t-diff-add { color: #2ed573; background: rgba(46,213,115,.06); display: block; padding: 1px 4px; border-radius: 2px; }
+.term-output .t-diff-del { color: #ff6b81; background: rgba(255,107,129,.06); display: block; padding: 1px 4px; border-radius: 2px; }
+.term-output .t-diff-header { color: #63b3ed; font-weight: 600; display: block; margin-top: 6px; }
+.term-output .t-prompt { color: var(--accent-purple); font-weight: 700; display: block; margin-top: 8px; }
+.term-output .t-activity { color: #63b3ed; }
+.term-output .t-test-pass { color: #2ed573; padding-left: 8px; }
+.term-output .t-question {
+  color: #ffa502; font-weight: 600;
+  display: block; margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(255,165,2,.06);
+  border-radius: 6px;
+  border: 1px solid rgba(255,165,2,.12);
+}
 
 .term-input-bar {
   flex-shrink: 0; border-top: 1px solid var(--border);
@@ -707,26 +723,75 @@ async function openTerminal(paneId) {
   startTermRefresh();
 }
 
+function stripAnsi(str) {
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/\x1b[^[\]]/g, '')
+    .replace(/[\x00-\x08\x0e-\x1f]/g, '');
+}
+
 function formatTermOutput(raw) {
-  let html = esc(raw);
-  // Colorize diff lines
-  html = html.replace(/^(\+\s.*)$/gm, '<span class="t-green">$1</span>');
-  html = html.replace(/^(-\s.*)$/gm, '<span class="t-red">$1</span>');
-  // Colorize success markers
-  html = html.replace(/✓/g, '<span class="t-green">✓</span>');
-  html = html.replace(/✗/g, '<span class="t-red">✗</span>');
-  // Colorize spinners
-  html = html.replace(/[✻⠋⠙⠸⠴⠦⠇◆]/g, '<span class="t-blue">$&</span>');
-  // Bold markers
-  html = html.replace(/⏺\s*(.*)/g, '<span class="t-bold">⏺ $1</span>');
-  // Prompt
-  html = html.replace(/^(&gt;\s*)$/gm, '<span class="t-prompt">$1</span>');
-  // Dim lines (--- file ---)
-  html = html.replace(/^(---\s.*)$/gm, '<span class="t-dim">$1</span>');
-  // PASS / FAIL
-  html = html.replace(/PASS/g, '<span class="t-green">PASS</span>');
-  html = html.replace(/FAIL/g, '<span class="t-red">FAIL</span>');
-  return html;
+  // Strip ANSI first, then escape HTML
+  const clean = stripAnsi(raw);
+  const lines = clean.split('\n');
+  
+  const formatted = lines.map(line => {
+    const trimmed = line.trim();
+    const escaped = esc(line);
+    
+    // Empty lines
+    if (!trimmed) return '<span class="t-dim">​</span>';
+    
+    // Claude Code section headers (⏺ Reading..., ⏺ Writing...)
+    if (/^⏺/.test(trimmed))
+      return '<span class="t-section">' + escaped + '</span>';
+    
+    // Success markers (✓ Read file, ✓ Wrote file)
+    if (/^✓/.test(trimmed))
+      return '<span class="t-success">' + escaped + '</span>';
+    
+    // Error/failure markers
+    if (/^✗|^ERROR|^Error:|FAIL/i.test(trimmed))
+      return '<span class="t-error">' + escaped + '</span>';
+    
+    // Diff: added lines
+    if (/^\+\s/.test(trimmed) || /^\+[^+]/.test(trimmed))
+      return '<span class="t-diff-add">' + escaped + '</span>';
+    
+    // Diff: removed lines
+    if (/^-\s/.test(trimmed) || /^-[^-]/.test(trimmed))
+      return '<span class="t-diff-del">' + escaped + '</span>';
+    
+    // Diff: file headers
+    if (/^---\s|^\+\+\+\s|^diff\s/.test(trimmed))
+      return '<span class="t-diff-header">' + escaped + '</span>';
+    
+    // Prompt lines (>, ❯, $)
+    if (/^[>❯$]\s*$/.test(trimmed))
+      return '<span class="t-prompt">' + escaped + '</span>';
+    
+    // Spinners / activity
+    if (/[✻⠋⠙⠸⠴⠦⠇◆]/.test(trimmed))
+      return '<span class="t-activity">' + escaped + '</span>';
+    
+    // Test results
+    if (/^\s*[✓✔]\s/.test(trimmed))
+      return '<span class="t-test-pass">' + escaped + '</span>';
+    
+    // File paths and commands (lines with ── separators)  
+    if (/^[─━═]+/.test(trimmed) || /^⏵/.test(trimmed))
+      return '<span class="t-dim">' + escaped + '</span>';
+    
+    // Permission/question prompts
+    if (/\(y\/n\)|accept edits|shift\+tab|How should|Do you want/i.test(trimmed))
+      return '<span class="t-question">' + escaped + '</span>';
+    
+    // Default
+    return escaped;
+  });
+  
+  return formatted.join('\n');
 }
 
 // Terminal auto-refresh
