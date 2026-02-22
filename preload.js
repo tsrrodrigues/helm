@@ -29,5 +29,6 @@ contextBridge.exposeInMainWorld('helm', {
   resizePill: (pillWidth) => ipcRenderer.send('resize-pill', pillWidth),
   forkSession: (sessionName, claudeSessionId, panePath, weztermTabId) =>
     ipcRenderer.invoke('fork-session', sessionName, claudeSessionId, panePath, weztermTabId),
-  sendKeys: (paneId, text) => ipcRenderer.invoke('send-keys', paneId, text)
+  sendKeys: (paneId, text) => ipcRenderer.invoke('send-keys', paneId, text),
+  debugLog: (msg) => ipcRenderer.send('debug-log', msg)
 });

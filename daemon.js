@@ -65,6 +65,7 @@ const paneClaudeSessionIds = new Map(); // paneId → Claude Code session UUID (
 const HOOK_TTL_MS = 30000; // 30s TTL for hook overrides
 let cachedState = { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let cachedStateJson = '{}';
+let stateVersion = 0; // incremented on user mutations; ticks skip broadcast if version changed mid-build
 
 // ── File helpers ──────────────────────────────────────────────────────────
 
@@ -247,7 +248,7 @@ async function listTmuxPanes() {
     .filter(Boolean)
     .map((line) => {
       const [sessionName, windowName, paneId, command, panePid, paneTitle, panePath, sessionAttached, windowActive, paneActive] = line.split('\t');
-      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '', isActive: sessionAttached === '1' && windowActive === '1' && paneActive === '1', isWindowActive: windowActive === '1' && paneActive === '1' };
+      return { sessionName, windowName, paneId, command: (command || '').trim(), panePid, paneTitle: paneTitle || '', panePath: panePath || '', isActive: parseInt(sessionAttached, 10) > 0 && windowActive === '1' && paneActive === '1', isWindowActive: windowActive === '1' && paneActive === '1' };
     })
     .filter((p) => p.paneId && p.sessionName);
 }
@@ -434,7 +435,7 @@ function statusForPane(pane, output, now, hasActiveChildren) {
 async function weztermMap(sessions) {
   const [wzRes, tmuxRes] = await Promise.all([
     execCmd('wezterm', ['cli', 'list', '--format', 'json']),
-    execCmd('tmux', ['list-clients', '-F', '#{client_tty}\t#{session_name}'])
+    execCmd('tmux', ['list-clients', '-F', '#{client_tty}\t#{session_name}\t#{client_activity}'])
   ]);
   if (!wzRes.ok) return { tabMap: {}, activeSession: null };
 
@@ -447,25 +448,48 @@ async function weztermMap(sessions) {
       if (item.tty_name) ttyToTab[item.tty_name] = { tabId: item.tab_id ?? item.tabId ?? null, isActive: !!item.is_active };
     }
 
-    // Build session → TTY map from tmux clients
+    // Build session → TTY map from tmux clients, tracking activity timestamps
     const sessionToTty = {};
+    const sessionActivity = {};
     if (tmuxRes.ok) {
       for (const line of tmuxRes.stdout.split('\n').filter(Boolean)) {
-        const [tty, session] = line.split('\t');
-        if (tty && session) sessionToTty[session] = tty;
+        const [tty, session, activity] = line.split('\t');
+        if (tty && session) {
+          const ts = parseInt(activity, 10) || 0;
+          // Keep the most recently active client per session
+          if (!sessionActivity[session] || ts > sessionActivity[session]) {
+            sessionToTty[session] = tty;
+            sessionActivity[session] = ts;
+          }
+        }
       }
     }
 
-    // Cross-reference: session → TTY → tab_id, and find WezTerm-active session
+    // Cross-reference: session → TTY → tab_id
     const tabMap = {};
     let activeSession = null;
+    let activeCount = 0;
     for (const sessionName of sessions) {
       const tty = sessionToTty[sessionName];
       if (tty && ttyToTab[tty]) {
         tabMap[sessionName] = ttyToTab[tty].tabId;
-        if (ttyToTab[tty].isActive) activeSession = sessionName;
+        if (ttyToTab[tty].isActive) { activeSession = sessionName; activeCount++; }
       }
     }
+
+    // WezTerm is_active is per-pane, not per-tab — if multiple tabs report active,
+    // fall back to tmux client_activity (most recently used session wins)
+    if (activeCount !== 1) {
+      activeSession = null;
+      let maxActivity = 0;
+      for (const sessionName of sessions) {
+        if (tabMap[sessionName] != null && (sessionActivity[sessionName] || 0) > maxActivity) {
+          maxActivity = sessionActivity[sessionName];
+          activeSession = sessionName;
+        }
+      }
+    }
+
     return { tabMap, activeSession };
   } catch (e) {
     console.error('[helm] weztermMap parse error:', e.message);
@@ -702,7 +726,9 @@ async function buildState() {
 
     // Track the active pane for this session (deterministic: each session always has one)
     if (pane.isWindowActive) {
-      frontsMap.get(pane.sessionName).activePaneId = pane.paneId;
+      const front = frontsMap.get(pane.sessionName);
+      front.activePaneId = pane.paneId;
+      front._activeWindowName = pane.windowName; // temporary — used to resolve agent pane below
     }
 
     // Track editor panes (vim/nvim) separately — not as agents
@@ -738,7 +764,8 @@ async function buildState() {
     if (!paneTaskNames.has(pane.paneId) && !paneTaskInitialized.has(pane.paneId) && st.status !== 'idle') {
       paneTaskInitialized.add(pane.paneId);
       suggestPaneTask(pane.paneId, output, pane.panePath).then((name) => {
-        if (name) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
+        // Guard: don't overwrite if a name was set while AI was thinking (e.g. manual rename)
+        if (name && !paneTaskNames.has(pane.paneId)) { paneTaskNames.set(pane.paneId, name); savePaneTasks(); }
       });
     }
 
@@ -781,6 +808,19 @@ async function buildState() {
     };
   });
 
+  // Resolve each front's activePaneId to the nearest agent in the same window.
+  // The active tmux pane might be a vim/editor pane — the renderer needs an agent pane.
+  for (const f of fronts) {
+    if (f.activePaneId && f.agents.length && !f.agents.some(a => a.paneId === f.activePaneId)) {
+      const sameWindowAgent = f._activeWindowName
+        ? f.agents.find(a => a.windowName === f._activeWindowName)
+        : null;
+      // Same window first, then fall back to first agent in the session
+      f.activePaneId = sameWindowAgent ? sameWindowAgent.paneId : f.agents[0].paneId;
+    }
+    delete f._activeWindowName;
+  }
+
   const waitingAgents = fronts.flatMap(f => f.agents.map(a => ({ ...a, frontName: f.name }))).filter(a => a.status === 'waiting');
   waitingAgents.sort((a, b) => (a.waitingSince || Infinity) - (b.waitingSince || Infinity));
 
@@ -790,9 +830,20 @@ async function buildState() {
     : panes.find(p => p.isActive);
   const activeSessionName = wzActiveSession || (activePaneObj ? activePaneObj.sessionName : null);
 
+  // Resolve global activePane to nearest agent (not vim/editor)
+  let activeAgentPaneId = activePaneObj ? activePaneObj.paneId : null;
+  if (activePaneObj) {
+    const activeFront = fronts.find(f => f.sessionName === activePaneObj.sessionName);
+    if (activeFront && activeFront.agents.length && !activeFront.agents.some(a => a.paneId === activePaneObj.paneId)) {
+      const sameWindowAgent = activeFront.agents.find(a => a.windowName === activePaneObj.windowName);
+      // Same window first, then fall back to first agent in the session
+      activeAgentPaneId = sameWindowAgent ? sameWindowAgent.paneId : activeFront.agents[0].paneId;
+    }
+  }
+
   return {
     fronts,
-    activePane: activePaneObj ? activePaneObj.paneId : null,
+    activePane: activeAgentPaneId,
     activeSessionName,
     summary: {
       total: fronts.length,
@@ -831,7 +882,10 @@ function broadcast(json) {
 
 async function tick() {
   try {
+    const versionAtStart = stateVersion;
     const next = await buildState();
+    // Skip broadcast if a user mutation happened during build (stale state)
+    if (stateVersion !== versionAtStart) return;
     const json = JSON.stringify(next);
     if (json !== cachedStateJson) {
       cachedState = next;
@@ -976,7 +1030,18 @@ async function handleRequest(req, res) {
         if (!paneId || !name) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId or name' })); return; }
         paneTaskNames.set(paneId, name);
         savePaneTasks();
-        cachedStateJson = '{}';
+        // Increment version to invalidate any in-flight tick
+        stateVersion++;
+        // Patch cachedState and broadcast immediately (don't wait for async tick)
+        if (cachedState.fronts) {
+          for (const f of cachedState.fronts) {
+            for (const a of f.agents) {
+              if (a.paneId === paneId) { a.task = name; break; }
+            }
+          }
+          cachedStateJson = JSON.stringify(cachedState);
+          broadcast(cachedStateJson);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, name }));
       } catch (e) {
@@ -1023,8 +1088,18 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
         if (name) {
           paneTaskNames.set(paneId, name);
           savePaneTasks();
-          // Force broadcast so UI updates immediately
-          cachedStateJson = '{}';
+          // Increment version to invalidate any in-flight tick
+          stateVersion++;
+          // Patch cachedState and broadcast immediately
+          if (cachedState.fronts) {
+            for (const f of cachedState.fronts) {
+              for (const a of f.agents) {
+                if (a.paneId === paneId) { a.task = name; break; }
+              }
+            }
+            cachedStateJson = JSON.stringify(cachedState);
+            broadcast(cachedStateJson);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, name }));
         } else {

@@ -17,6 +17,47 @@ let daemonSocket;
 let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let isExpanded = false;
 
+// ── Daemon API helper (auto-detects HTTP vs HTTPS) ─────────────────────────
+const CERT_DIR = path.join(os.homedir(), '.helm', 'certs');
+const CERT_DOMAIN = 'macbook-pro-de-tiago.tail8a488e.ts.net';
+let _daemonUseTls = null; // cached detection
+
+function daemonUseTls() {
+  if (_daemonUseTls === null) {
+    try {
+      fs.accessSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
+      fs.accessSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
+      _daemonUseTls = true;
+    } catch {
+      _daemonUseTls = false;
+    }
+  }
+  return _daemonUseTls;
+}
+
+function daemonPost(urlPath, payload, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const mod = daemonUseTls() ? require('https') : require('http');
+    const protocol = daemonUseTls() ? 'https' : 'http';
+    const req = mod.request(`${protocol}://127.0.0.1:7374${urlPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      rejectUnauthorized: false // self-signed cert
+    }, (res) => {
+      let body = '';
+      res.on('data', d => { body += d; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
+      });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.setTimeout(timeoutMs, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.write(data);
+    req.end();
+  });
+}
+
 const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
 const pillPosFile = path.join(helmDir, 'pill-position.json');
@@ -367,14 +408,11 @@ app.whenReady().then(() => {
   connectDaemon();
   if (process.env.HELM_DEV) watchRenderer();
   startOverlayTracking();
-  globalShortcut.register('Control+H', async () => {
+  globalShortcut.register('Control+H', () => {
     if (win && !win.isDestroyed()) {
-      // Query tmux for the active pane RIGHT NOW, before focus changes
-      const { stdout } = await runFile('tmux', ['display-message', '-p', '#{pane_id}'], true);
-      const freshPane = (stdout || '').trim() || null;
       win.setFocusable(true);
       win.focus();
-      win.webContents.send('shortcut-fired', freshPane);
+      win.webContents.send('shortcut-fired');
     }
   });
 });
@@ -469,6 +507,11 @@ ipcMain.on('refocus-previous-app', () => {
       '-e', `tell application id "${lastExternalApp}" to activate`
     ], true);
   }
+});
+
+ipcMain.on('debug-log', (_e, msg) => {
+  const fs = require('fs');
+  fs.appendFileSync(path.join(os.homedir(), '.helm', 'debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
 });
 
 ipcMain.on('blur-window', () => {
@@ -634,66 +677,15 @@ ipcMain.handle('kill-window', async (_e, paneId) => {
 
 ipcMain.handle('rename-agent', async (_e, paneId) => {
   if (!paneId) return { ok: false, error: 'missing paneId' };
-  const http = require('http');
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({ paneId });
-    const req = http.request('http://127.0.0.1:7374/rename-agent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-    }, (res) => {
-      let body = '';
-      res.on('data', d => { body += d; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
-      });
-    });
-    req.on('error', (e) => resolve({ ok: false, error: e.message }));
-    req.setTimeout(30000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
-    req.write(payload);
-    req.end();
-  });
+  return daemonPost('/rename-agent', { paneId }, 30000);
 });
 
 ipcMain.handle('manual-rename-agent', async (_e, paneId, name) => {
   if (!paneId || !name) return { ok: false, error: 'missing paneId or name' };
-  const http = require('http');
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({ paneId, name });
-    const req = http.request('http://127.0.0.1:7374/manual-rename-agent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-    }, (res) => {
-      let body = '';
-      res.on('data', d => { body += d; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
-      });
-    });
-    req.on('error', (e) => resolve({ ok: false, error: e.message }));
-    req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
-    req.write(payload);
-    req.end();
-  });
+  return daemonPost('/manual-rename-agent', { paneId, name }, 5000);
 });
 
 ipcMain.handle('send-keys', async (_e, paneId, text) => {
   if (!paneId || text == null) return { ok: false, error: 'missing paneId or text' };
-  const http = require('http');
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({ paneId, text });
-    const req = http.request('http://127.0.0.1:7374/send-keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-    }, (res) => {
-      let body = '';
-      res.on('data', d => { body += d; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
-      });
-    });
-    req.on('error', (e) => resolve({ ok: false, error: e.message }));
-    req.setTimeout(10000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
-    req.write(payload);
-    req.end();
-  });
+  return daemonPost('/send-keys', { paneId, text }, 10000);
 });

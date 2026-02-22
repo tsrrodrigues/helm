@@ -244,7 +244,8 @@ html, body {
 
 /* ── Row body ─────────────────────────────────────── */
 .r-body { flex: 1; min-width: 0; }
-.r-main { display: flex; align-items: baseline; gap: 0; margin-bottom: 2px; }
+.r-main { display: flex; align-items: baseline; gap: 0; }
+.r-session { font-size: 10px; font-weight: 600; color: #555; flex-shrink: 0; }
 .r-project { font-size: 11px; font-weight: 800; letter-spacing: -.02em; flex-shrink: 0; }
 .r-project.c-0 { color: #63b3ed; }
 .r-project.c-1 { color: #b794f4; }
@@ -255,16 +256,6 @@ html, body {
 .r-sep { color: #333; margin: 0 6px; font-size: 10px; flex-shrink: 0; }
 .r-task { font-size: 11px; font-weight: 600; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .r-time { font-size: 10px; color: #444; margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; padding-left: 8px; }
-.r-output {
-  font-size: 10px; color: #3d3d55; font-family: 'SF Mono','Menlo',monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.02em;
-}
-.row.is-wait .r-output { color: #666; }
-.row.expanded .r-output { display: none; }
-.r-output .ch { margin-right: 3px; }
-.r-output .ch.wait { color: #b07820; }
-.r-output .ch.run  { color: #3a3a5a; }
-.r-output .ch.done { color: #4a90d9; }
 
 /* Agent rename inline */
 .ar-name-input {

@@ -179,7 +179,7 @@ $('add-session-btn').addEventListener('click', (e) => {
   startCreateSession();
 });
 
-window.helm.onShortcutFired((freshPane) => {
+window.helm.onShortcutFired(() => {
   if (state.open) {
     // Toggle: close + blur
     togglePanel(false);
@@ -188,8 +188,6 @@ window.helm.onShortcutFired((freshPane) => {
   }
   state.shortcutMode = true;
   togglePanel(true);
-  preselectAgent(freshPane);
-  render();
 });
 
 window.helm.onStateUpdate((next) => {
@@ -237,10 +235,9 @@ window.helm.onStateUpdate((next) => {
 
   state.data = next;
 
-  // Clear override when daemon catches up to the same active pane
-  if (_activePaneOverride && next.activePane === _activePaneOverride) {
-    _activePaneOverride = null;
-    clearTimeout(_activePaneOverrideTimer);
+  // Clear navigation override when daemon catches up to the same active pane
+  if (_lastNavigatedPane && next.activePane === _lastNavigatedPane) {
+    _lastNavigatedPane = null;
   }
 
   if (!state.inlineEditSession && !state.inlineEditAgent) render();
@@ -329,12 +326,21 @@ function togglePanel(force) {
     state.open = true;
     panel.classList.remove('closing', 'visible');
 
-    // Auto-expand oldest undismissed waiting agent
-    const focusTarget = getOldestUndismissedWaiting();
+    // Resolve where the user effectively IS (Helm navigation > daemon poll)
+    const activePaneId = getActivePane();
+    const activeAgent = activePaneId ? findAgentByPane(activePaneId) : null;
+    const currentSession = activeAgent?.sessionName || state.data.activeSessionName;
+
+    // Auto-expand oldest undismissed waiting agent from current session, or fall back to active agent
+    const focusTarget = getOldestUndismissedWaiting(currentSession);
     if (focusTarget) {
       state.expandedPane = focusTarget.agent.paneId;
       state.selectedPane = { ...focusTarget.agent, sessionName: focusTarget.front.sessionName, weztermTabId: focusTarget.front.weztermTabId };
+    } else if (activeAgent) {
+      state.selectedPane = activeAgent;
+      state.expandedPane = activeAgent.paneId;
     } else {
+      state.selectedPane = null;
       state.expandedPane = null;
     }
     render();
@@ -381,24 +387,16 @@ function resizeToContent() {
   // No-op: window is always at expanded size, panel scrolls internally
 }
 
-// Override for active pane — set by Helm navigation, cleared when daemon catches up
-let _activePaneOverride = null;
-let _activePaneOverrideTimer = null;
-
-function setActivePaneOverride(paneId) {
-  _activePaneOverride = paneId;
-  clearTimeout(_activePaneOverrideTimer);
-  // Keep override for 15s — daemon should catch up within one poll cycle (5s)
-  _activePaneOverrideTimer = setTimeout(() => { _activePaneOverride = null; }, 15000);
-}
+// Last agent the user navigated to via Helm — persists until daemon confirms
+let _lastNavigatedPane = null;
 
 function getActivePane() {
-  return _activePaneOverride || state.data.activePane;
+  return _lastNavigatedPane || state.data.activePane;
 }
 
 function navigateTo(agent) {
   state.dismissedPanes.add(agent.paneId);
-  setActivePaneOverride(agent.paneId);
+  _lastNavigatedPane = agent.paneId;
   window.helm.navigateToPane(agent.sessionName, agent.windowName, agent.paneId, agent.weztermTabId);
   render();
 }
@@ -440,8 +438,42 @@ function projectColor(name) {
   return ((h % 6) + 6) % 6; // always positive 0-5
 }
 
-// Deterministic glyph for agent based on paneId hash
+// Collision-aware glyph assignment — each active agent gets a unique glyph
+const glyphAssignments = new Map(); // paneId → glyphIndex (stable across renders)
+
+function assignGlyphs(allPaneIds) {
+  // Remove stale assignments
+  for (const [id] of glyphAssignments) {
+    if (!allPaneIds.includes(id)) glyphAssignments.delete(id);
+  }
+
+  const usedIndices = new Set();
+  for (const [, idx] of glyphAssignments) usedIndices.add(idx);
+
+  for (const paneId of allPaneIds) {
+    if (glyphAssignments.has(paneId)) continue;
+
+    // Hash for deterministic starting point
+    let h = 0;
+    for (let i = 0; i < paneId.length; i++) h = ((h << 5) - h + paneId.charCodeAt(i)) | 0;
+    let idx = ((h % GLYPHS.length) + GLYPHS.length) % GLYPHS.length;
+
+    // Find next available if collision
+    let attempts = 0;
+    while (usedIndices.has(idx) && attempts < GLYPHS.length) {
+      idx = (idx + 1) % GLYPHS.length;
+      attempts++;
+    }
+
+    glyphAssignments.set(paneId, idx);
+    usedIndices.add(idx);
+  }
+}
+
 function glyphForAgent(paneId) {
+  const idx = glyphAssignments.get(paneId);
+  if (idx != null) return GLYPHS[idx];
+  // Fallback for calls before assignGlyphs (shouldn't happen)
   let h = 0;
   for (let i = 0; i < paneId.length; i++) h = ((h << 5) - h + paneId.charCodeAt(i)) | 0;
   return GLYPHS[((h % GLYPHS.length) + GLYPHS.length) % GLYPHS.length];
@@ -459,10 +491,11 @@ function findAgentByPane(paneId) {
 
 // ── Focus helpers ────────────────────────────────────────────────────────
 
-function getOldestUndismissedWaiting() {
+function getOldestUndismissedWaiting(filterSession) {
   let oldest = null;
   let oldestFront = null;
   for (const f of (state.data.fronts || [])) {
+    if (filterSession && f.sessionName !== filterSession) continue;
     for (const a of f.agents) {
       if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) {
         if (!oldest || (a.waitingSince && (!oldest.waitingSince || a.waitingSince < oldest.waitingSince))) {
@@ -641,6 +674,13 @@ function manualRenameAgent() {
       // Keep inlineEditAgent locked until daemon confirms the new name
       // (prevents patchAgentRowV5 from overwriting with the old name)
       window.helm.manualRenameAgent(paneId, name).then(() => {
+        // Update state.data immediately so renders show the new name
+        // (daemon broadcast may not have arrived yet)
+        for (const f of (state.data.fronts || [])) {
+          for (const a of f.agents) {
+            if (a.paneId === paneId) { a.task = name; break; }
+          }
+        }
         state.inlineEditAgent = null;
       }).catch(err => {
         console.error('[helm] manual rename failed:', err);
@@ -803,6 +843,13 @@ function cancelDelete() {
 // ── Main render ───────────────────────────────────────────────────────────
 
 function render() {
+  // Assign unique glyphs before any rendering
+  const allPaneIds = [];
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) allPaneIds.push(a.paneId);
+  }
+  assignGlyphs(allPaneIds);
+
   // Effective waiting = waiting agents NOT dismissed
   let effectiveWaiting = 0;
   for (const f of (state.data.fronts || [])) {
@@ -1005,26 +1052,24 @@ function createAgentRowV5(agent, front) {
   const projectDir = front.projectDir || front.sessionName;
   const projectName = projectDir.split('/').pop() || projectDir;
   const sdotClass = isWait ? 'wait' : 'run';
-  const statusChar = isWait ? '❯' : '✱';
-  const statusClass = isWait ? 'wait' : 'run';
-  const lastOutput = isWait
-    ? (agent.waitingSummary || agent.lastOutput || 'aguardando resposta')
-    : (agent.lastOutput || 'trabalhando...');
   const confirmType = state.confirmingDelete?.type === 'session' ? 'sessão' : 'window';
 
   const agentNum = getAgentGlobalIndex(agent.paneId);
   const numBadge = agentNum ? `<span class="g-num">${agentNum}</span>` : '';
+  const taskName = agent.task || '';
+  const taskSepStyle = taskName ? '' : ' style="display:none"';
+  const taskHtml = `<span class="r-sep"${taskSepStyle}>\u203A</span><span class="r-task">${escapeHtml(taskName)}</span>`;
 
   row.innerHTML = `
     <div class="glyph g-${colorIdx}">${numBadge}${glyph}<span class="sdot ${sdotClass}"></span></div>
     <div class="r-body">
       <div class="r-main">
-        <span class="r-project c-${colorIdx}">${escapeHtml(projectName)}</span>
+        <span class="r-session">${escapeHtml(front.sessionName)}</span>
         <span class="r-sep">\u203A</span>
-        <span class="r-task">${escapeHtml(agent.task || agent.windowName)}</span>
+        <span class="r-project c-${colorIdx}">${escapeHtml(projectName)}</span>
+        ${taskHtml}
         <span class="r-time">${formatElapsed(agent.interactionStartedAt)}</span>
       </div>
-      <div class="r-output"><span class="ch ${statusClass}">${statusChar}</span> ${escapeHtml(lastOutput)}</div>
       <div class="response-card"></div>
     </div>
     <div class="ar-delete" data-pane="${agent.paneId}" title="deletar">\u2715</div>
@@ -1102,6 +1147,10 @@ function patchAgentRowV5(row, agent, front) {
   const sdot = row.querySelector('.sdot');
   if (sdot) sdot.className = `sdot ${isWait ? 'wait' : 'run'}`;
 
+  // Update session name
+  const sessEl = row.querySelector('.r-session');
+  if (sessEl) setText(sessEl, front.sessionName);
+
   // Update project name
   const projEl = row.querySelector('.r-project');
   if (projEl) {
@@ -1111,29 +1160,22 @@ function patchAgentRowV5(row, agent, front) {
     for (let i = 0; i < 6; i++) cls(projEl, `c-${i}`, i === colorIdx);
   }
 
-  // Update task name (skip during inline edit)
+  // Update task name (skip during inline edit) — allow blank
   if (state.inlineEditAgent !== agent.paneId) {
     const taskEl = row.querySelector('.r-task');
     if (taskEl && !taskEl.querySelector('.ar-name-input')) {
-      setText(taskEl, agent.task || agent.windowName);
+      const taskName = agent.task || '';
+      setText(taskEl, taskName);
+      // Show/hide separator before task name
+      const seps = row.querySelectorAll('.r-sep');
+      const taskSep = seps.length > 1 ? seps[1] : null;
+      if (taskSep) taskSep.style.display = taskName ? '' : 'none';
     }
   }
 
   // Update time
   const timeEl = row.querySelector('.r-time');
   if (timeEl) setText(timeEl, formatElapsed(agent.interactionStartedAt));
-
-  // Update lastOutput
-  const outputEl = row.querySelector('.r-output');
-  if (outputEl) {
-    const statusChar = isWait ? '❯' : '✱';
-    const statusClass = isWait ? 'wait' : 'run';
-    const lastOutput = isWait
-      ? (agent.waitingSummary || agent.lastOutput || 'aguardando resposta')
-      : (agent.lastOutput || 'trabalhando...');
-    const newHtml = `<span class="ch ${statusClass}">${statusChar}</span> ${escapeHtml(lastOutput)}`;
-    if (outputEl.innerHTML !== newHtml) outputEl.innerHTML = newHtml;
-  }
 
   // Update response card
   const cardEl = row.querySelector('.response-card');
@@ -1215,7 +1257,7 @@ function renderResponseCard(cardEl, agent, front) {
       `;
     }
 
-    // KPIs from structured data (no keywords — already visible in r-output)
+    // KPIs from structured data
     if (rc.kpis?.length) {
       kpisHtml = `<div class="rc-kpis">
         ${rc.kpis.map(k => `<span class="rc-kpi ${k.color || ''}"><span class="kpi-num">${escapeHtml(k.num)}</span><span class="kpi-label">${escapeHtml(k.label)}</span></span>`).join('')}
