@@ -6,6 +6,14 @@ const WebSocket = require('ws');
 
 const PORT = 7373;
 const POLL_MS = 5000;
+const WAIT_WITH_PROMPT_MS = 3000;   // stable + recognized prompt → waiting
+const WAIT_NO_PROMPT_MS = 8000;     // stable + no prompt → waiting (fallback)
+
+const HOME = os.homedir();
+const HELM_DIR = path.join(HOME, '.helm');
+const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
+const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
+const PANE_TASKS_FILE = path.join(HELM_DIR, 'pane-tasks.json');
 
 // ── Push notifications ────────────────────────────────────────────────────
 let webpush = null;
@@ -19,7 +27,7 @@ try {
   console.log('[helm] web-push enabled');
 } catch { console.log('[helm] web-push not installed — push notifications disabled'); }
 
-const PUSH_SUBS_FILE = path.join(HOME, '.helm', 'push-subscriptions.json');
+const PUSH_SUBS_FILE = path.join(HELM_DIR, 'push-subscriptions.json');
 let pushSubscriptions = [];
 try { pushSubscriptions = JSON.parse(fs.readFileSync(PUSH_SUBS_FILE, 'utf8')); } catch {}
 
@@ -33,7 +41,6 @@ function sendPushNotification(title, body, tag) {
   for (const sub of [...pushSubscriptions]) {
     webpush.sendNotification(sub, payload).catch(err => {
       console.log('[helm] push failed:', err.statusCode || err.message);
-      // Remove invalid subscriptions (410 = expired)
       if (err.statusCode === 410 || err.statusCode === 404) {
         pushSubscriptions = pushSubscriptions.filter(s => s.endpoint !== sub.endpoint);
         savePushSubs();
@@ -41,14 +48,6 @@ function sendPushNotification(title, body, tag) {
     });
   }
 }
-const WAIT_WITH_PROMPT_MS = 3000;   // stable + recognized prompt → waiting
-const WAIT_NO_PROMPT_MS = 8000;     // stable + no prompt → waiting (fallback)
-
-const HOME = os.homedir();
-const HELM_DIR = path.join(HOME, '.helm');
-const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
-const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
-const PANE_TASKS_FILE = path.join(HELM_DIR, 'pane-tasks.json');
 const PANE_CLAUDE_SESSIONS_FILE = path.join(HELM_DIR, 'pane-claude-sessions.json');
 
 const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
