@@ -803,6 +803,11 @@ async function buildState() {
   };
 }
 
+// ── TLS config ────────────────────────────────────────────────────────────
+const CERT_DIR = path.join(HOME, '.helm', 'certs');
+const CERT_DOMAIN = 'macbook-pro-de-tiago.tail8a488e.ts.net';
+const https = require('https');
+
 // ── WebSocket server ──────────────────────────────────────────────────────
 
 let wss;
@@ -841,10 +846,7 @@ async function tick() {
 
 // Debug + API HTTP server (HTTPS when certs available, HTTP fallback)
 const http = require('http');
-const https = require('https');
 const MOBILE_HTML = path.join(__dirname, 'mobile.html');
-const CERT_DIR = path.join(HOME, '.helm', 'certs');
-const CERT_DOMAIN = 'macbook-pro-de-tiago.tail8a488e.ts.net';
 
 let httpServer;
 try {
