@@ -17,8 +17,8 @@ const $ = (id) => document.getElementById(id);
 const pill       = $('pill');
 const panel      = $('panel');
 const rowsEl     = $('rows');
-const pillBadgesEl = $('pill-badges');
-const activeGlyphEl = $('active-glyph');
+
+
 
 // Curated glyph set — high-contrast Unicode symbols for agent badges
 const GLYPHS = ['⚙', '⚡', '◆', '★', '■', '△', '⚒', '☷', '✦', '✱'];
@@ -864,18 +864,20 @@ function render() {
   pill.className = effectiveWaiting > 0 ? 'pill has-waiting' : 'pill all-ok';
   if (wasNudge && effectiveWaiting > 0) pill.classList.add('pill-nudge');
 
-  // Pill dots — one per agent, in listing order, matching agent status
-  const dots = [];
+  // Pill glyphs — waiting left, running right
+  const waitGlyphs = [];
+  const runGlyphs = [];
   for (const f of (state.data.fronts || [])) {
+    const colorIdx = projectColor(f.projectDir);
     for (const a of f.agents) {
+      const glyph = glyphForAgent(a.paneId);
       const isWait = a.status === 'waiting' && !state.dismissedPanes.has(a.paneId);
-      dots.push(`<div class="pdot ${isWait ? 'wait' : 'run'}"></div>`);
+      const html = `<div class="pill-glyph ${isWait ? 'wait' : 'run'} g-${colorIdx}">${glyph}</div>`;
+      if (isWait) waitGlyphs.push(html); else runGlyphs.push(html);
     }
   }
-  $('pill-dots').innerHTML = dots.join('');
-
-  // Pill badges — mini glyphs of waiting agents
-  renderPillBadges();
+  $('pill-waiting').innerHTML = waitGlyphs.join('');
+  $('pill-running').innerHTML = runGlyphs.join('');
 
   // Active glyph — shows which agent is in the current terminal
   renderActiveGlyph();
@@ -934,33 +936,16 @@ function renderCreateArea() {
   setTimeout(() => input.focus(), 0);
 }
 
-// ── Pill badges renderer ──────────────────────────────────────────────────
 
-function renderPillBadges() {
-  const badges = [];
-  for (const f of (state.data.fronts || [])) {
-    for (const a of f.agents) {
-      if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) {
-        const colorIdx = projectColor(f.projectDir);
-        const glyph = glyphForAgent(a.paneId);
-        badges.push(`<div class="pill-badge g-${colorIdx}">${glyph}</div>`);
-      }
-    }
-  }
-  pillBadgesEl.innerHTML = badges.join('');
-}
-
-// ── Active glyph renderer ────────────────────────────────────────────────
+// ── Active watermark updater ─────────────────────────────────────────────
 
 function renderActiveGlyph() {
   const activePane = getActivePane();
   if (!activePane) {
-    activeGlyphEl.classList.remove('visible');
     window.helm.updateWatermark({ glyph: null, colorIdx: 0 });
     return;
   }
 
-  // Find the agent and front for the active pane
   let activeAgent = null;
   let activeFront = null;
   for (const f of (state.data.fronts || [])) {
@@ -971,27 +956,12 @@ function renderActiveGlyph() {
   }
 
   if (!activeAgent || !activeFront) {
-    activeGlyphEl.classList.remove('visible');
     window.helm.updateWatermark({ glyph: null, colorIdx: 0 });
     return;
   }
 
   const colorIdx = projectColor(activeFront.projectDir);
   const glyph = glyphForAgent(activeAgent.paneId);
-
-  // Update class and content
-  for (let i = 0; i < 6; i++) cls(activeGlyphEl, `g-${i}`, i === colorIdx);
-  activeGlyphEl.textContent = glyph;
-  activeGlyphEl.classList.add('visible');
-
-  // Position centered below the pill
-  requestAnimationFrame(() => {
-    const pillRect = pill.getBoundingClientRect();
-    activeGlyphEl.style.left = (pillRect.left + pillRect.width / 2 - activeGlyphEl.offsetWidth / 2) + 'px';
-    activeGlyphEl.style.top = (pillRect.bottom + 6) + 'px';
-  });
-
-  // Send watermark data to main process
   window.helm.updateWatermark({ glyph, colorIdx });
 }
 

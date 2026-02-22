@@ -51,51 +51,38 @@ html, body {
 }
 .pill.all-ok:hover { border-color: rgba(46, 213, 115, 0.45); }
 
-.pdots { display: flex; gap: 6px; align-items: center; }
-.pdot  { width: 9px; height: 9px; border-radius: 50%; }
-.pdot.run  { background: #2ed573; box-shadow: 0 0 6px rgba(46,213,115,.55); }
-.pdot.wait { background: #ffa502; box-shadow: 0 0 7px rgba(255,165,2,.65); }
-.pdot.done { background: #63b3ed; box-shadow: 0 0 5px rgba(99,179,237,.4); }
-
 .pdiv { width: 1px; height: 17px; background: rgba(255,255,255,0.1); }
 
 .ptext { font-size: 14px; font-weight: 600; color: #ffa502; white-space: nowrap; }
 .pill.all-ok .ptext { color: #2ed573; }
 
-/* Pill badges — mini glyphs of waiting agents */
-.pill-badges {
+/* Pill glyphs — mini icons per agent */
+.pill-glyphs {
   display: flex; gap: 5px; align-items: center;
-  border-left: 1px solid rgba(255,255,255,.08); padding-left: 10px;
 }
-.pill-badges:empty { display: none; }
+.pill-glyphs:empty { display: none; }
+.pill-glyphs:empty + .pdiv { display: none; }
+.pdiv:has(+ .pill-glyphs:empty) { display: none; }
 
-/* ── Active glyph — shows which agent is in the current terminal ── */
-.active-glyph {
-  position: absolute;
-  width: 34px; height: 34px;
-  border-radius: 9px;
-  display: none; align-items: center; justify-content: center;
-  font-size: 18px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-}
-.active-glyph.visible { display: flex; }
-.active-glyph.g-0 { background: rgba(99,179,237,.2); color: #7ec8f5; }
-.active-glyph.g-1 { background: rgba(183,148,244,.2); color: #cdb4fa; }
-.active-glyph.g-2 { background: rgba(104,211,145,.2); color: #8ae4a8; }
-.active-glyph.g-3 { background: rgba(251,191,36,.2); color: #fcd34d; }
-.active-glyph.g-4 { background: rgba(244,114,182,.2); color: #f9a8d4; }
-.active-glyph.g-5 { background: rgba(103,216,239,.2); color: #7ee8f5; }
-.pill-badge {
+.pill-glyph {
   width: 22px; height: 22px; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; flex-shrink: 0;
+  font-size: 15px; flex-shrink: 0;
 }
-.pill-badge.g-0 { background: rgba(99,179,237,.15); color: #63b3ed; }
-.pill-badge.g-1 { background: rgba(183,148,244,.15); color: #b794f4; }
-.pill-badge.g-2 { background: rgba(104,211,145,.15); color: #68d391; }
-.pill-badge.g-3 { background: rgba(251,191,36,.15); color: #fbbf24; }
-.pill-badge.g-4 { background: rgba(244,114,182,.15); color: #f687b3; }
-.pill-badge.g-5 { background: rgba(103,216,239,.15); color: #67d8ef; }
+/* Running — dimmed, project color */
+.pill-glyph.run.g-0 { background: rgba(99,179,237,.08); color: rgba(99,179,237,.4); }
+.pill-glyph.run.g-1 { background: rgba(183,148,244,.08); color: rgba(183,148,244,.4); }
+.pill-glyph.run.g-2 { background: rgba(104,211,145,.08); color: rgba(104,211,145,.4); }
+.pill-glyph.run.g-3 { background: rgba(251,191,36,.08); color: rgba(251,191,36,.4); }
+.pill-glyph.run.g-4 { background: rgba(244,114,182,.08); color: rgba(244,114,182,.4); }
+.pill-glyph.run.g-5 { background: rgba(103,216,239,.08); color: rgba(103,216,239,.4); }
+/* Waiting — bright, project color */
+.pill-glyph.wait.g-0 { background: rgba(99,179,237,.15); color: #63b3ed; }
+.pill-glyph.wait.g-1 { background: rgba(183,148,244,.15); color: #b794f4; }
+.pill-glyph.wait.g-2 { background: rgba(104,211,145,.15); color: #68d391; }
+.pill-glyph.wait.g-3 { background: rgba(251,191,36,.15); color: #fbbf24; }
+.pill-glyph.wait.g-4 { background: rgba(244,114,182,.15); color: #f687b3; }
+.pill-glyph.wait.g-5 { background: rgba(103,216,239,.15); color: #67d8ef; }
 
 /* ── Panel ─────────────────────────────────────────── */
 .panel {
@@ -156,7 +143,6 @@ html, body {
 .row:hover { background: rgba(255,255,255,.03); opacity: .7; }
 .row.is-wait { background: rgba(255,165,2,.02); opacity: 1; }
 .row.is-wait:hover { background: rgba(255,165,2,.045); }
-.row.selected { opacity: 1; }
 .row-div { display: none; }
 
 /* Color tint bands — subtle project background */
@@ -624,7 +610,7 @@ html, body {
 .add-session-footer-btn:hover { color: #6c63ff; border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.06); }
 
 /* ── Blink & animations ───────────────────────────── */
-.blink-dim .pdot.wait,
+.blink-dim .pill-glyph.wait,
 .blink-dim .sdot.wait { opacity: 1; }
 
 @keyframes pill-bounce {
