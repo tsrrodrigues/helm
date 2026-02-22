@@ -122,6 +122,7 @@ html, body {
 .agent-row:active { background: rgba(255,255,255,.04); }
 .agent-row.is-wait { background: rgba(255,165,2,.02); }
 .agent-row.expanded { background: rgba(255,255,255,.02); }
+.agent-row.is-dismissed { opacity: .45; }
 
 .agent-row.accent-0 { border-left-color: rgba(99,179,237,.5); }
 .agent-row.accent-1 { border-left-color: rgba(183,148,244,.5); }
@@ -540,6 +541,7 @@ const state = {
   selectedPane: null,
   expandedPane: null,
   terminalPane: null, // paneId for terminal view
+  dismissedPanes: new Set(), // panes the user has seen and collapsed
 };
 
 // ── Mock data ───────────────────────────────────────
@@ -1082,7 +1084,16 @@ function connect() {
     };
     ws.onmessage = (e) => {
       try {
-        state.data = JSON.parse(e.data);
+        const next = JSON.parse(e.data);
+        // Clear dismiss for panes that left waiting (agent resumed)
+        for (const paneId of state.dismissedPanes) {
+          let stillWaiting = false;
+          for (const f of (next.fronts || []))
+            for (const a of f.agents)
+              if (a.paneId === paneId && a.status === 'waiting') stillWaiting = true;
+          if (!stillWaiting) state.dismissedPanes.delete(paneId);
+        }
+        state.data = next;
         renderList();
         updateTerminalView();
       } catch {}
@@ -1130,7 +1141,12 @@ async function sendKeys(paneId, text) {
 function renderList() {
   const { fronts, summary } = state.data;
   document.getElementById('stat-agents').textContent = summary?.totalAgents || 0;
-  document.getElementById('stat-waiting').textContent = summary?.waiting || 0;
+  // Count effective waiting (exclude dismissed)
+  let effectiveWaiting = 0;
+  for (const f of (fronts || []))
+    for (const a of f.agents)
+      if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) effectiveWaiting++;
+  document.getElementById('stat-waiting').textContent = effectiveWaiting;
 
   const allAgents = [];
   for (const f of (fronts || []))
@@ -1176,7 +1192,8 @@ function buildRow(agent, front) {
     : (cleanOutput(agent.lastOutput) || 'trabalhando...');
   const output = rawOutput;
 
-  row.className = 'agent-row accent-' + ci + (isWait ? ' is-wait' : '') + (isExpanded ? ' expanded' : '');
+  const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
+  row.className = 'agent-row accent-' + ci + (isWait ? ' is-wait' : '') + (isExpanded ? ' expanded' : '') + (isDismissed ? ' is-dismissed' : '');
 
   let cardHtml = '';
   if (isExpanded) cardHtml = buildCard(agent, front);
@@ -1202,6 +1219,11 @@ function buildRow(agent, front) {
     if (e.target.closest('.rc-option, .rc-btn, .write-input')) return;
     const pane = row.dataset.pane;
     if (state.expandedPane === pane) {
+      // Collapsing — dismiss if waiting
+      const ag = findAgent(pane);
+      if (ag && ag.agent.status === 'waiting') {
+        state.dismissedPanes.add(pane);
+      }
       state.expandedPane = null;
       state.selectedPane = null;
     } else {
