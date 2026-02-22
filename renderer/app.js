@@ -956,6 +956,7 @@ function renderActiveGlyph() {
   const activePane = getActivePane();
   if (!activePane) {
     activeGlyphEl.classList.remove('visible');
+    window.helm.updateWatermark({ glyph: null, colorIdx: 0 });
     return;
   }
 
@@ -971,6 +972,7 @@ function renderActiveGlyph() {
 
   if (!activeAgent || !activeFront) {
     activeGlyphEl.classList.remove('visible');
+    window.helm.updateWatermark({ glyph: null, colorIdx: 0 });
     return;
   }
 
@@ -988,6 +990,9 @@ function renderActiveGlyph() {
     activeGlyphEl.style.left = (pillRect.left + pillRect.width / 2 - activeGlyphEl.offsetWidth / 2) + 'px';
     activeGlyphEl.style.top = (pillRect.bottom + 6) + 'px';
   });
+
+  // Send watermark data to main process
+  window.helm.updateWatermark({ glyph, colorIdx });
 }
 
 // ── Flat rows reconciler ─────────────────────────────────────────────────

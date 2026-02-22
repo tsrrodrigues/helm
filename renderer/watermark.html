@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Helm Watermark</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    #wm {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.4s ease;
+    }
+    #wm.hidden { opacity: 0; }
+    #glyph {
+      font-size: 50vh;
+      line-height: 1;
+      opacity: 0.05;
+      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      transition: color 0.3s ease;
+    }
+    #glyph.g-0 { color: #63b3ed; }
+    #glyph.g-1 { color: #b794f4; }
+    #glyph.g-2 { color: #68d391; }
+    #glyph.g-3 { color: #fbbf24; }
+    #glyph.g-4 { color: #f687b3; }
+    #glyph.g-5 { color: #67d8ef; }
+  </style>
+</head>
+<body>
+  <div id="wm" class="hidden">
+    <div id="glyph" class="g-0"></div>
+  </div>
+  <script>
+    const wm = document.getElementById('wm');
+    const glyph = document.getElementById('glyph');
+
+    window.wmBridge.onUpdate(({ glyph: g, colorIdx, visible }) => {
+      if (!g) {
+        wm.classList.add('hidden');
+        return;
+      }
+      glyph.textContent = g;
+      for (let i = 0; i < 6; i++) glyph.classList.toggle('g-' + i, i === colorIdx);
+      if (visible) wm.classList.remove('hidden');
+      else wm.classList.add('hidden');
+    });
+  </script>
+</body>
+</html>

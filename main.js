@@ -13,9 +13,12 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 let win;
+let watermarkWin;
 let daemonSocket;
 let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
 let isExpanded = false;
+let lastWatermarkData = { glyph: null, colorIdx: 0 };
+let isWezterm = false;
 
 // ── Daemon API helper (auto-detects HTTP vs HTTPS) ─────────────────────────
 const CERT_DIR = path.join(os.homedir(), '.helm', 'certs');
@@ -169,19 +172,23 @@ const TERMINAL_BUNDLE_IDS = new Set([
 
 // ── AeroSpace workspace tracking & active-app detection ──────────────────
 let aeroWindowId = null;
+let aeroWatermarkId = null;
 let lastWorkspace = null;
 let lastActiveApp = null;
 let lastExternalApp = null; // last non-Helm app (to restore focus)
 
 function startOverlayTracking() {
-  // Resolve our AeroSpace window ID once the window is ready
+  // Resolve our AeroSpace window IDs once the windows are ready
   setTimeout(async () => {
     const res = await aeroCmd(['list-windows', '--all']);
     if (res.ok && res.stdout) {
       for (const line of res.stdout.split('\n')) {
         if (line.includes('Helm HUD')) {
           const match = line.match(/^(\d+)/);
-          if (match) { aeroWindowId = match[1]; break; }
+          if (match && !aeroWindowId) { aeroWindowId = match[1]; }
+        } else if (line.includes('Helm Watermark')) {
+          const match = line.match(/^(\d+)/);
+          if (match) { aeroWatermarkId = match[1]; }
         }
       }
     }
@@ -196,6 +203,10 @@ function startOverlayTracking() {
         await aeroCmd(['move-node-to-workspace', ws, '--window-id', aeroWindowId]);
         if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
       }
+      if (aeroWatermarkId) {
+        await aeroCmd(['move-node-to-workspace', ws, '--window-id', aeroWatermarkId]);
+        if (watermarkWin && !watermarkWin.isDestroyed()) watermarkWin.setAlwaysOnTop(true, 'pop-up-menu');
+      }
     }
   }, 500);
 
@@ -208,8 +219,13 @@ function startOverlayTracking() {
       lastActiveApp = appId;
       if (appId !== 'com.github.Electron') lastExternalApp = appId;
       const isTerminal = TERMINAL_BUNDLE_IDS.has(appId);
+      isWezterm = appId === 'com.github.wez.wezterm';
       if (win && !win.isDestroyed()) {
         win.webContents.send('active-app-changed', { appId, isTerminal });
+      }
+      // Update watermark visibility
+      if (watermarkWin && !watermarkWin.isDestroyed()) {
+        watermarkWin.webContents.send('watermark-update', { ...lastWatermarkData, visible: isWezterm && !!lastWatermarkData.glyph });
       }
     }
   }, 2000);
@@ -333,6 +349,34 @@ function createWindow() {
     } catch {}
     win.show();
   });
+
+  // ── Watermark window (fullscreen, transparent, non-interactive) ────────
+  const { workArea } = screen.getPrimaryDisplay();
+  watermarkWin = new BrowserWindow({
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    show: false,
+    focusable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'watermark-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  watermarkWin.setAlwaysOnTop(true, 'pop-up-menu');
+  watermarkWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  watermarkWin.setIgnoreMouseEvents(true);
+  watermarkWin.loadFile(path.join(__dirname, 'renderer/watermark.html'));
+  watermarkWin.once('ready-to-show', () => watermarkWin.show());
 }
 
 // ── Daemon WebSocket ──────────────────────────────────────────────────────
@@ -387,6 +431,9 @@ function watchRenderer() {
       if (win && !win.isDestroyed()) {
         console.log('[helm] renderer changed, reloading...');
         win.webContents.reloadIgnoringCache();
+      }
+      if (watermarkWin && !watermarkWin.isDestroyed()) {
+        watermarkWin.webContents.reloadIgnoringCache();
       }
     }, 300);
   });
@@ -512,6 +559,14 @@ ipcMain.on('refocus-previous-app', () => {
 ipcMain.on('debug-log', (_e, msg) => {
   const fs = require('fs');
   fs.appendFileSync(path.join(os.homedir(), '.helm', 'debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
+});
+
+// Watermark data from renderer → forward to watermark window
+ipcMain.on('update-watermark', (_e, data) => {
+  lastWatermarkData = data;
+  if (watermarkWin && !watermarkWin.isDestroyed()) {
+    watermarkWin.webContents.send('watermark-update', { ...data, visible: isWezterm && !!data.glyph });
+  }
 });
 
 ipcMain.on('blur-window', () => {
