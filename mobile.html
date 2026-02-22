@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Helm Mobile</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a14">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a14;
+  --surface: rgba(255,255,255,.03);
+  --border: rgba(255,255,255,.07);
+  --text: #ccc;
+  --text-dim: #555;
+  --text-muted: #3a3a5a;
+  --accent-orange: #ffa502;
+  --accent-green: #2ed573;
+  --accent-blue: #63b3ed;
+  --accent-purple: #6c63ff;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── App shell ──────────────────────────────── */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* ── Views (routing) ────────────────────────── */
+.view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.view.active { display: flex; }
+
+/* ── Header ─────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-logo { font-size: 18px; font-weight: 800; letter-spacing: -.02em; color: #fff; }
+.header-logo span { color: var(--accent-purple); }
+.header-stats { display: flex; gap: 12px; align-items: center; }
+.stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.stat strong { color: #888; font-weight: 700; }
+.stat.waiting strong { color: var(--accent-orange); }
+.stat .dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot.green { background: var(--accent-green); box-shadow: 0 0 6px rgba(46,213,115,.5); }
+.dot.orange { background: var(--accent-orange); box-shadow: 0 0 6px rgba(255,165,2,.5); }
+
+.conn-status { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.conn-status.connected { color: var(--accent-green); background: rgba(46,213,115,.1); }
+.conn-status.disconnected { color: #e05050; background: rgba(224,80,80,.1); }
+
+/* ── Agent list ─────────────────────────────── */
+.agent-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+.agent-row {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+  border-left: 3px solid transparent;
+  transition: background .15s;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.agent-row:active { background: rgba(255,255,255,.04); }
+.agent-row.is-wait { background: rgba(255,165,2,.02); }
+.agent-row.expanded { background: rgba(255,255,255,.02); }
+
+.agent-row.accent-0 { border-left-color: rgba(99,179,237,.5); }
+.agent-row.accent-1 { border-left-color: rgba(183,148,244,.5); }
+.agent-row.accent-2 { border-left-color: rgba(104,211,145,.5); }
+.agent-row.accent-3 { border-left-color: rgba(251,191,36,.5); }
+.agent-row.accent-4 { border-left-color: rgba(244,114,182,.5); }
+.agent-row.accent-5 { border-left-color: rgba(103,216,239,.5); }
+.agent-row.is-wait.accent-0 { border-left-color: rgba(99,179,237,.9); }
+.agent-row.is-wait.accent-1 { border-left-color: rgba(183,148,244,.9); }
+.agent-row.is-wait.accent-2 { border-left-color: rgba(104,211,145,.9); }
+.agent-row.is-wait.accent-3 { border-left-color: rgba(251,191,36,.9); }
+.agent-row.is-wait.accent-4 { border-left-color: rgba(244,114,182,.9); }
+.agent-row.is-wait.accent-5 { border-left-color: rgba(103,216,239,.9); }
+
+.agent-top { display: flex; align-items: center; gap: 10px; }
+
+.glyph {
+  width: 36px; height: 36px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; flex-shrink: 0; position: relative;
+}
+.glyph.g-0 { background: rgba(99,179,237,.12); color: #63b3ed; }
+.glyph.g-1 { background: rgba(183,148,244,.12); color: #b794f4; }
+.glyph.g-2 { background: rgba(104,211,145,.12); color: #68d391; }
+.glyph.g-3 { background: rgba(251,191,36,.12); color: #fbbf24; }
+.glyph.g-4 { background: rgba(244,114,182,.12); color: #f687b3; }
+.glyph.g-5 { background: rgba(103,216,239,.12); color: #67d8ef; }
+
+.glyph .sdot {
+  position: absolute; bottom: -2px; right: -2px;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--bg);
+}
+.sdot.run { background: var(--accent-green); }
+.sdot.wait { background: var(--accent-orange); box-shadow: 0 0 5px rgba(255,165,2,.5); }
+
+.agent-info { flex: 1; min-width: 0; }
+.agent-meta { display: flex; align-items: baseline; gap: 0; margin-bottom: 2px; }
+.agent-project { font-size: 12px; font-weight: 800; letter-spacing: -.02em; }
+.agent-project.c-0 { color: #63b3ed; }
+.agent-project.c-1 { color: #b794f4; }
+.agent-project.c-2 { color: #68d391; }
+.agent-project.c-3 { color: #fbbf24; }
+.agent-project.c-4 { color: #f687b3; }
+.agent-project.c-5 { color: #67d8ef; }
+.agent-sep { color: #333; margin: 0 6px; font-size: 10px; }
+.agent-task { font-size: 12px; font-weight: 600; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-time { font-size: 11px; color: #444; margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; padding-left: 8px; }
+.agent-output {
+  font-size: 11px; color: var(--text-muted);
+  font-family: 'SF Mono','Menlo',monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -.02em;
+}
+.agent-row.is-wait .agent-output { color: #666; }
+.ch { margin-right: 3px; }
+.ch.wait { color: #b07820; }
+.ch.run { color: var(--text-muted); }
+
+/* ── Expanded card ──────────────────────────── */
+.response-card { display: none; margin-top: 12px; animation: rc-in 150ms ease-out; }
+.agent-row.expanded .response-card { display: block; }
+@keyframes rc-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+
+.rc-hero { padding: 12px 14px; border-radius: 10px; margin-bottom: 10px; }
+.rc-hero.question { background: rgba(255,165,2,.06); border: 1px solid rgba(255,165,2,.15); }
+.rc-hero.response { background: rgba(99,179,237,.04); border: 1px solid rgba(99,179,237,.1); }
+.rc-hero.permission { background: rgba(239,68,68,.05); border: 1px solid rgba(239,68,68,.15); }
+.rc-hero-label { font-size: 9px; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; margin-bottom: 6px; }
+.rc-hero.question .rc-hero-label { color: #b07820; }
+.rc-hero.response .rc-hero-label { color: #4a7a9a; }
+.rc-hero.permission .rc-hero-label { color: #a04040; }
+.rc-hero-text { font-size: 13px; font-weight: 600; line-height: 1.45; }
+.rc-hero.question .rc-hero-text { color: #e0c090; }
+.rc-hero.response .rc-hero-text { color: #b0cfe0; }
+.rc-hero.permission .rc-hero-text { color: #e08080; }
+
+.rc-command {
+  margin-top: 8px; padding: 8px 10px;
+  background: rgba(0,0,0,.3); border-radius: 6px;
+  font-family: 'SF Mono','Menlo',monospace;
+  font-size: 11px; color: #aaa; overflow-x: auto;
+  border: 1px solid rgba(255,255,255,.04);
+}
+
+.rc-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.rc-option {
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 10px; padding: 12px 14px;
+  cursor: pointer; transition: all .12s;
+  display: flex; align-items: center; gap: 10px;
+  -webkit-tap-highlight-color: transparent;
+}
+.rc-option:active { background: rgba(255,255,255,.06); transform: scale(.98); }
+.opt-num {
+  font-size: 10px; font-weight: 700; color: #555;
+  background: rgba(255,255,255,.06); border-radius: 4px;
+  padding: 2px 6px; font-family: 'SF Mono','Menlo',monospace; flex-shrink: 0;
+}
+.opt-label { font-size: 13px; font-weight: 600; color: #ddd; }
+.rc-option.rc-approve .opt-label { color: #68d391; }
+.rc-option.rc-deny .opt-label { color: #e05050; }
+.rc-option.selected { border-color: rgba(46,213,115,.5); background: rgba(46,213,115,.08); }
+.rc-option.selected .opt-label { color: var(--accent-green); }
+.rc-option.selected .opt-label::after { content: ' ✓'; }
+
+.rc-keywords { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.rc-kw {
+  padding: 2px 7px; border-radius: 4px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06);
+  font-size: 10px; font-weight: 600; color: #777;
+  font-family: 'SF Mono','Menlo',monospace;
+}
+
+.rc-actions { display: flex; gap: 8px; }
+.rc-btn {
+  flex: 1; font-size: 12px; font-weight: 600; padding: 10px 14px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03);
+  color: #777; cursor: pointer; text-align: center;
+  -webkit-tap-highlight-color: transparent; transition: all .12s;
+}
+.rc-btn:active { transform: scale(.97); }
+.rc-btn.primary { color: var(--accent-purple); border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.08); }
+
+.write-area { display: none; margin-top: 10px; animation: rc-in 120ms ease-out; }
+.write-area.visible { display: block; }
+.write-input {
+  width: 100%; background: rgba(0,0,0,.3);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; color: var(--text);
+  font-family: inherit; outline: none; resize: none;
+  min-height: 44px; line-height: 1.4; -webkit-appearance: none;
+}
+.write-input::placeholder { color: #444; }
+.write-input:focus { border-color: rgba(108,99,255,.4); }
+.write-submit { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+@keyframes sent-flash { 0% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+.sent-indicator {
+  font-size: 12px; color: var(--accent-green); font-weight: 600;
+  padding: 12px 14px; animation: sent-flash 1s ease-out forwards; animation-delay: .4s;
+}
+
+/* ── Bottom input bar ───────────────────────── */
+.bottom-bar {
+  flex-shrink: 0; border-top: 1px solid var(--border);
+  background: rgba(10,10,20,.98); padding: 10px 12px;
+  display: flex; gap: 8px; align-items: flex-end;
+}
+.bottom-input-wrap { flex: 1; }
+.bottom-target { font-size: 10px; color: var(--text-dim); padding: 0 4px 6px; white-space: nowrap; }
+.bottom-target strong { color: var(--accent-orange); }
+.bottom-input {
+  width: 100%; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 20px;
+  padding: 10px 16px; font-size: 15px; color: var(--text);
+  font-family: inherit; outline: none; resize: none;
+  min-height: 42px; max-height: 120px; line-height: 1.4; -webkit-appearance: none;
+}
+.bottom-input::placeholder { color: #444; }
+.bottom-input:focus { border-color: rgba(108,99,255,.3); }
+.send-btn {
+  width: 42px; height: 42px; border-radius: 50%;
+  background: var(--accent-purple); border: none; color: #fff;
+  font-size: 18px; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent; transition: transform .1s, opacity .1s;
+}
+.send-btn:active { transform: scale(.9); }
+.send-btn:disabled { opacity: .3; }
+
+/* ── Empty state ────────────────────────────── */
+.empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: var(--text-dim); gap: 8px; padding: 40px;
+}
+.empty-state .icon { font-size: 48px; opacity: .3; }
+.empty-state .msg { font-size: 14px; text-align: center; }
+
+/* ══════════════════════════════════════════════
+   TERMINAL VIEW (full-screen route)
+   ══════════════════════════════════════════════ */
+.term-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.term-back {
+  font-size: 22px; color: var(--accent-purple); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0 4px;
+  font-weight: 300;
+}
+.term-back:active { opacity: .5; }
+.term-title-wrap { flex: 1; min-width: 0; }
+.term-title { font-size: 14px; font-weight: 700; color: #ddd; }
+.term-subtitle { font-size: 11px; color: var(--text-dim); }
+.term-status-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.term-status-dot.run { background: var(--accent-green); box-shadow: 0 0 6px rgba(46,213,115,.5); }
+.term-status-dot.wait { background: var(--accent-orange); box-shadow: 0 0 6px rgba(255,165,2,.5); }
+
+.term-output-wrap {
+  flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 12px 14px;
+}
+.term-output {
+  font-family: 'SF Mono','Menlo','Courier New',monospace;
+  font-size: 12px; color: #bbb; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* Basic ANSI-ish styling for demo */
+.term-output .t-dim { color: #555; }
+.term-output .t-green { color: #2ed573; }
+.term-output .t-blue { color: #63b3ed; }
+.term-output .t-orange { color: #ffa502; }
+.term-output .t-red { color: #e05050; }
+.term-output .t-bold { font-weight: 700; color: #eee; }
+.term-output .t-prompt { color: var(--accent-purple); font-weight: 700; }
+
+.term-input-bar {
+  flex-shrink: 0; border-top: 1px solid var(--border);
+  background: rgba(10,10,20,.98); padding: 10px 12px;
+  display: flex; gap: 8px; align-items: flex-end;
+}
+.term-input {
+  flex: 1; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; color: var(--text);
+  font-family: 'SF Mono','Menlo',monospace;
+  outline: none; resize: none; min-height: 42px; max-height: 120px;
+  line-height: 1.4; -webkit-appearance: none;
+}
+.term-input::placeholder { color: #444; }
+.term-input:focus { border-color: rgba(108,99,255,.4); }
+.term-send {
+  width: 42px; height: 42px; border-radius: 8px;
+  background: var(--accent-purple); border: none; color: #fff;
+  font-size: 16px; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent; transition: transform .1s;
+}
+.term-send:active { transform: scale(.9); }
+
+/* Quick actions bar in terminal view */
+.term-quick {
+  display: flex; gap: 6px; padding: 6px 12px 0;
+  flex-shrink: 0; overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.term-quick::-webkit-scrollbar { display: none; }
+.term-quick-btn {
+  font-size: 11px; font-weight: 600;
+  padding: 5px 12px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  color: #888; cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.term-quick-btn:active { background: rgba(255,255,255,.08); }
+.term-quick-btn.green { color: #68d391; border-color: rgba(46,213,115,.2); }
+.term-quick-btn.red { color: #e05050; border-color: rgba(224,80,80,.15); }
+
+/* ── Blink ──────────────────────────────────── */
+.blink-dim .sdot.wait, .blink-dim .term-status-dot.wait { opacity: .3; }
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ══ VIEW: LIST ══════════════════════════════ -->
+  <div class="view active" id="view-list">
+    <div class="header">
+      <div class="header-left">
+        <div class="header-logo"><span>⎈</span> Helm</div>
+        <div class="conn-status disconnected" id="conn-status">offline</div>
+      </div>
+      <div class="header-stats">
+        <div class="stat"><div class="dot green"></div><strong id="stat-agents">0</strong></div>
+        <div class="stat waiting"><div class="dot orange"></div><strong id="stat-waiting">0</strong></div>
+      </div>
+    </div>
+
+    <div class="agent-list" id="agent-list">
+      <div class="empty-state" id="empty-state">
+        <div class="icon">⎈</div>
+        <div class="msg">Nenhum agente ativo<br><span style="font-size:12px;color:#333">Conecte ao daemon para monitorar</span></div>
+      </div>
+    </div>
+
+    <div class="bottom-bar" id="bottom-bar" style="display:none">
+      <div class="bottom-input-wrap">
+        <div class="bottom-target" id="bottom-target"></div>
+        <textarea class="bottom-input" id="bottom-input" placeholder="Instrução para o agente..." rows="1"></textarea>
+      </div>
+      <button class="send-btn" id="send-btn">↑</button>
+    </div>
+  </div>
+
+  <!-- ══ VIEW: TERMINAL ═════════════════════════ -->
+  <div class="view" id="view-terminal">
+    <div class="term-header">
+      <div class="term-back" id="term-back">‹</div>
+      <div class="term-title-wrap">
+        <div class="term-title" id="term-title">agente</div>
+        <div class="term-subtitle" id="term-subtitle">projeto</div>
+      </div>
+      <div class="term-status-dot run" id="term-dot"></div>
+    </div>
+
+    <div class="term-output-wrap" id="term-output-wrap">
+      <div class="term-output" id="term-output"></div>
+    </div>
+
+    <div class="term-quick" id="term-quick">
+      <button class="term-quick-btn green" data-cmd="y">yes</button>
+      <button class="term-quick-btn red" data-cmd="n">no</button>
+      <button class="term-quick-btn" data-cmd="retry">retry</button>
+      <button class="term-quick-btn" data-cmd="continue">continue</button>
+      <button class="term-quick-btn" data-cmd="skip">skip</button>
+    </div>
+
+    <div class="term-input-bar">
+      <textarea class="term-input" id="term-input" placeholder="Comando..." rows="1"></textarea>
+      <button class="term-send" id="term-send">↑</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────
+const _host = location.hostname || 'localhost';
+const WS_URL = `ws://${_host}:7373`;
+const API_URL = `http://${_host}:7374`;
+
+// ── State ───────────────────────────────────────────
+const state = {
+  data: { fronts: [], summary: { total: 0, totalAgents: 0, waiting: 0 } },
+  connected: false,
+  selectedPane: null,
+  expandedPane: null,
+  terminalPane: null, // paneId for terminal view
+};
+
+// ── Mock data ───────────────────────────────────────
+const DEMO_OUTPUT = `\x1b[1m⏺ Reading src/middleware/auth.ts\x1b[0m
+
+I'll analyze the authentication middleware and implement the JWT validation.
+
+\x1b[32m✓\x1b[0m Read src/middleware/auth.ts (142 lines)
+\x1b[32m✓\x1b[0m Read src/config/jwt.ts (38 lines)
+\x1b[32m✓\x1b[0m Read src/types/auth.d.ts (24 lines)
+
+\x1b[1m⏺ Writing src/middleware/auth.ts\x1b[0m
+
+I need to add token refresh logic and handle expired tokens gracefully.
+The current implementation throws a 401 immediately, but we should attempt
+a refresh first if the refresh token is valid.
+
+\x1b[34m--- src/middleware/auth.ts ---\x1b[0m
+\x1b[32m+ import { refreshToken } from '../services/token'\x1b[0m
+\x1b[32m+ \x1b[0m
+\x1b[32m+ export async function authMiddleware(req, res, next) {\x1b[0m
+\x1b[32m+   const token = req.headers.authorization?.split(' ')[1]\x1b[0m
+\x1b[32m+   if (!token) return res.status(401).json({ error: 'No token' })\x1b[0m
+\x1b[32m+   \x1b[0m
+\x1b[32m+   try {\x1b[0m
+\x1b[32m+     const decoded = jwt.verify(token, config.secret)\x1b[0m
+\x1b[32m+     req.user = decoded\x1b[0m
+\x1b[32m+     next()\x1b[0m
+\x1b[32m+   } catch (err) {\x1b[0m
+\x1b[32m+     if (err.name === 'TokenExpiredError') {\x1b[0m
+\x1b[32m+       const refreshed = await refreshToken(req.cookies.rt)\x1b[0m
+\x1b[32m+       if (refreshed) {\x1b[0m
+\x1b[32m+         res.setHeader('X-New-Token', refreshed.accessToken)\x1b[0m
+\x1b[32m+         req.user = refreshed.user\x1b[0m
+\x1b[32m+         return next()\x1b[0m
+\x1b[32m+       }\x1b[0m
+\x1b[32m+     }\x1b[0m
+\x1b[32m+     return res.status(401).json({ error: 'Invalid token' })\x1b[0m
+\x1b[32m+   }\x1b[0m
+\x1b[32m+ }\x1b[0m
+
+\x1b[32m✓\x1b[0m Wrote src/middleware/auth.ts (+24 -8 lines)
+
+\x1b[1m⏺ Writing tests for the new refresh logic\x1b[0m
+
+\x1b[32m✓\x1b[0m Wrote src/middleware/__tests__/auth.test.ts (86 lines)
+\x1b[32m✓\x1b[0m Running tests...
+
+  PASS src/middleware/__tests__/auth.test.ts
+    ✓ should pass valid token (3ms)
+    ✓ should reject missing token (1ms)
+    ✓ should refresh expired token (12ms)
+    ✓ should reject invalid refresh token (2ms)
+    ✓ should set X-New-Token header on refresh (4ms)
+
+  Tests: \x1b[32m5 passed\x1b[0m, 5 total
+  Time:  0.847s
+
+\x1b[33m>\x1b[0m `;
+
+const DEMO_DATA = {
+  fronts: [
+    {
+      name: 'helm', sessionName: 'helm', projectDir: 'helm',
+      agents: [{
+        paneId: '%1', windowName: 'main', command: 'claude',
+        task: 'mobile prototype', status: 'waiting',
+        lastOutput: '> ',
+        waitingSince: Date.now() - 180000,
+        waitingSummary: '• criou helm-mobile.html\n• implementou layout responsivo\n• aguarda: validação',
+        interactionStartedAt: Date.now() - 600000,
+        terminalOutput: DEMO_OUTPUT,
+        responseCard: {
+          type: 'question',
+          hero: 'Como você quer o layout do input no mobile?',
+          options: [
+            { label: 'Input fixo no bottom (estilo chat)', tags: ['bottom-bar'] },
+            { label: 'Input inline no card expandido', tags: ['inline'] },
+            { label: 'Ambos (bottom bar + inline)', tags: ['hybrid'] }
+          ],
+          keywords: ['helm-mobile.html', 'responsive', 'PWA']
+        }
+      }]
+    },
+    {
+      name: 'legal-doc-api', sessionName: 'legal-doc', projectDir: 'legal-doc-api',
+      agents: [
+        {
+          paneId: '%2', windowName: 'feat', command: 'claude',
+          task: 'auth middleware', status: 'running',
+          lastOutput: '✻ Writing src/middleware/auth.ts...',
+          waitingSince: null, waitingSummary: null,
+          interactionStartedAt: Date.now() - 300000,
+          terminalOutput: DEMO_OUTPUT,
+          responseCard: null
+        },
+        {
+          paneId: '%3', windowName: 'tests', command: 'codex',
+          task: 'unit tests auth', status: 'waiting',
+          lastOutput: 'Do you want to apply these changes? (y/n)',
+          waitingSince: Date.now() - 45000,
+          waitingSummary: '• escreveu 12 testes auth.ts\n• cobertura: 94%\n• aguarda: aprovação',
+          interactionStartedAt: Date.now() - 420000,
+          terminalOutput: DEMO_OUTPUT,
+          responseCard: {
+            type: 'permission',
+            hero: 'Aplicar mudanças em 3 arquivos?',
+            command: 'git apply --check patch.diff && git apply patch.diff',
+            keywords: ['auth.test.ts', 'middleware.test.ts']
+          }
+        }
+      ]
+    },
+    {
+      name: 'aegis', sessionName: 'aegis', projectDir: 'aegis',
+      agents: [{
+        paneId: '%4', windowName: 'refactor', command: 'claude',
+        task: 'database migration', status: 'running',
+        lastOutput: '⠸ Analyzing schema changes...',
+        waitingSince: null, waitingSummary: null,
+        interactionStartedAt: Date.now() - 120000,
+        terminalOutput: '⠸ Analyzing schema changes across 14 tables...\n\nComparing current schema with migration target...',
+        responseCard: null
+      }]
+    }
+  ],
+  summary: { total: 3, totalAgents: 4, waiting: 2, oldestWaiting: { paneId: '%1' } }
+};
+
+// ── DOM refs ────────────────────────────────────────
+const listEl = document.getElementById('agent-list');
+const emptyEl = document.getElementById('empty-state');
+const connEl = document.getElementById('conn-status');
+const inputEl = document.getElementById('bottom-input');
+const sendBtn = document.getElementById('send-btn');
+const targetEl = document.getElementById('bottom-target');
+
+// ── Helpers ─────────────────────────────────────────
+const GLYPHS = ['⚙', '⚡', '◆', '★', '■', '△', '⚒', '☷', '✦', '✱'];
+
+function projectColor(n) {
+  if (!n) return 0;
+  let h = 0;
+  for (let i = 0; i < n.length; i++) h = ((h << 5) - h + n.charCodeAt(i)) | 0;
+  return ((h % 6) + 6) % 6;
+}
+
+function glyphFor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  return GLYPHS[((h % GLYPHS.length) + GLYPHS.length) % GLYPHS.length];
+}
+
+function esc(t) { return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function elapsed(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (s < 60) return '< 1m';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+function findAgent(paneId) {
+  for (const f of (state.data.fronts || []))
+    for (const a of f.agents)
+      if (a.paneId === paneId) return { agent: a, front: f };
+  return null;
+}
+
+// ── Routing ─────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+}
+
+function openTerminal(paneId) {
+  state.terminalPane = paneId;
+  const found = findAgent(paneId);
+  if (!found) return;
+  const { agent, front } = found;
+  const project = (front.projectDir || '').split('/').pop();
+
+  document.getElementById('term-title').textContent = agent.task || agent.windowName;
+  document.getElementById('term-subtitle').textContent = project + ' · ' + agent.command;
+  document.getElementById('term-dot').className = 'term-status-dot ' + (agent.status === 'waiting' ? 'wait' : 'run');
+
+  // Render terminal output
+  const outputEl = document.getElementById('term-output');
+  const raw = agent.terminalOutput || agent.lastOutput || '';
+  outputEl.innerHTML = formatTermOutput(raw);
+
+  // Scroll to bottom
+  const wrap = document.getElementById('term-output-wrap');
+  requestAnimationFrame(() => wrap.scrollTop = wrap.scrollHeight);
+
+  showView('terminal');
+}
+
+function formatTermOutput(raw) {
+  let html = esc(raw);
+  // Colorize diff lines
+  html = html.replace(/^(\+\s.*)$/gm, '<span class="t-green">$1</span>');
+  html = html.replace(/^(-\s.*)$/gm, '<span class="t-red">$1</span>');
+  // Colorize success markers
+  html = html.replace(/✓/g, '<span class="t-green">✓</span>');
+  html = html.replace(/✗/g, '<span class="t-red">✗</span>');
+  // Colorize spinners
+  html = html.replace(/[✻⠋⠙⠸⠴⠦⠇◆]/g, '<span class="t-blue">$&</span>');
+  // Bold markers
+  html = html.replace(/⏺\s*(.*)/g, '<span class="t-bold">⏺ $1</span>');
+  // Prompt
+  html = html.replace(/^(&gt;\s*)$/gm, '<span class="t-prompt">$1</span>');
+  // Dim lines (--- file ---)
+  html = html.replace(/^(---\s.*)$/gm, '<span class="t-dim">$1</span>');
+  // PASS / FAIL
+  html = html.replace(/PASS/g, '<span class="t-green">PASS</span>');
+  html = html.replace(/FAIL/g, '<span class="t-red">FAIL</span>');
+  return html;
+}
+
+// Terminal back button
+document.getElementById('term-back').addEventListener('click', () => {
+  state.terminalPane = null;
+  showView('list');
+});
+
+// Terminal send
+document.getElementById('term-send').addEventListener('click', () => {
+  const input = document.getElementById('term-input');
+  const text = input.value.trim();
+  if (!text || !state.terminalPane) return;
+  sendKeys(state.terminalPane, text);
+  input.value = '';
+  // Append to output
+  const outputEl = document.getElementById('term-output');
+  outputEl.innerHTML += '\n<span class="t-prompt">&gt;</span> ' + esc(text) + '\n';
+  const wrap = document.getElementById('term-output-wrap');
+  wrap.scrollTop = wrap.scrollHeight;
+});
+
+document.getElementById('term-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('term-send').click();
+  }
+});
+
+// Auto-resize term input
+document.getElementById('term-input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// Quick action buttons
+document.getElementById('term-quick').addEventListener('click', (e) => {
+  const btn = e.target.closest('.term-quick-btn');
+  if (!btn || !state.terminalPane) return;
+  const cmd = btn.dataset.cmd;
+  sendKeys(state.terminalPane, cmd);
+  const outputEl = document.getElementById('term-output');
+  outputEl.innerHTML += '\n<span class="t-prompt">&gt;</span> ' + esc(cmd) + '\n';
+  const wrap = document.getElementById('term-output-wrap');
+  wrap.scrollTop = wrap.scrollHeight;
+});
+
+// Update terminal view when new data arrives
+function updateTerminalView() {
+  if (!state.terminalPane) return;
+  const found = findAgent(state.terminalPane);
+  if (!found) { showView('list'); state.terminalPane = null; return; }
+  const { agent } = found;
+  document.getElementById('term-dot').className = 'term-status-dot ' + (agent.status === 'waiting' ? 'wait' : 'run');
+  // In real mode, update output from daemon data
+  if (state.connected && agent.terminalOutput) {
+    const outputEl = document.getElementById('term-output');
+    outputEl.innerHTML = formatTermOutput(agent.terminalOutput);
+    const wrap = document.getElementById('term-output-wrap');
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+}
+
+// ── WebSocket ───────────────────────────────────────
+let ws = null;
+
+function connect() {
+  try {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      state.connected = true;
+      connEl.textContent = 'online';
+      connEl.className = 'conn-status connected';
+    };
+    ws.onmessage = (e) => {
+      try {
+        state.data = JSON.parse(e.data);
+        renderList();
+        updateTerminalView();
+      } catch {}
+    };
+    ws.onclose = () => {
+      state.connected = false;
+      connEl.textContent = 'offline';
+      connEl.className = 'conn-status disconnected';
+      setTimeout(connect, 3000);
+    };
+    ws.onerror = () => ws.close();
+  } catch {
+    state.data = DEMO_DATA;
+    renderList();
+  }
+}
+
+async function sendKeys(paneId, text) {
+  if (!state.connected) { console.log('[demo] send-keys:', paneId, text); return true; }
+  try {
+    const r = await fetch(API_URL + '/send-keys', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paneId, text })
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// ── Render list ─────────────────────────────────────
+function renderList() {
+  const { fronts, summary } = state.data;
+  document.getElementById('stat-agents').textContent = summary?.totalAgents || 0;
+  document.getElementById('stat-waiting').textContent = summary?.waiting || 0;
+
+  const allAgents = [];
+  for (const f of (fronts || []))
+    for (const a of f.agents)
+      allAgents.push({ agent: a, front: f });
+
+  if (!allAgents.length) {
+    emptyEl.style.display = '';
+    listEl.querySelectorAll('.agent-row').forEach(el => el.remove());
+    updateBottomBar();
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  // Build fresh list (simple, no duplication bugs)
+  const existingPanes = new Set();
+  listEl.querySelectorAll('.agent-row').forEach(el => existingPanes.add(el.dataset.pane));
+
+  // Remove all existing rows and rebuild
+  listEl.querySelectorAll('.agent-row').forEach(el => el.remove());
+
+  allAgents.forEach(({ agent, front }) => {
+    const row = buildRow(agent, front);
+    listEl.appendChild(row);
+  });
+
+  updateBottomBar();
+}
+
+function buildRow(agent, front) {
+  const row = document.createElement('div');
+  row.dataset.pane = agent.paneId;
+
+  const isWait = agent.status === 'waiting';
+  const isExpanded = state.expandedPane === agent.paneId;
+  const ci = projectColor(front.projectDir);
+  const g = glyphFor(agent.paneId);
+  const project = (front.projectDir || front.sessionName || '').split('/').pop();
+  const statusChar = isWait ? '❯' : '✱';
+  const statusClass = isWait ? 'wait' : 'run';
+  const output = isWait
+    ? (agent.waitingSummary?.split('\n')[0] || agent.lastOutput || 'aguardando')
+    : (agent.lastOutput || 'trabalhando...');
+
+  row.className = 'agent-row accent-' + ci + (isWait ? ' is-wait' : '') + (isExpanded ? ' expanded' : '');
+
+  let cardHtml = '';
+  if (isExpanded) cardHtml = buildCard(agent, front);
+
+  row.innerHTML = `
+    <div class="agent-top">
+      <div class="glyph g-${ci}">${g}<span class="sdot ${isWait?'wait':'run'}"></span></div>
+      <div class="agent-info">
+        <div class="agent-meta">
+          <span class="agent-project c-${ci}">${esc(project)}</span>
+          <span class="agent-sep">›</span>
+          <span class="agent-task">${esc(agent.task || agent.windowName)}</span>
+          <span class="agent-time">${elapsed(agent.interactionStartedAt)}</span>
+        </div>
+        <div class="agent-output"><span class="ch ${statusClass}">${statusChar}</span> ${esc(output)}</div>
+      </div>
+    </div>
+    <div class="response-card">${cardHtml}</div>
+  `;
+
+  // Row click — expand/collapse
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.rc-option, .rc-btn, .write-input')) return;
+    const pane = row.dataset.pane;
+    if (state.expandedPane === pane) {
+      state.expandedPane = null;
+      state.selectedPane = null;
+    } else {
+      state.expandedPane = pane;
+      state.selectedPane = pane;
+    }
+    renderList();
+  });
+
+  // Bind card events
+  if (isExpanded) bindCardEvents(row, agent);
+
+  return row;
+}
+
+function buildCard(agent, front) {
+  const rc = agent.responseCard;
+  const isWait = agent.status === 'waiting';
+  let html = '';
+
+  if (rc) {
+    if (rc.type === 'question' && rc.options?.length) {
+      html += `<div class="rc-hero question">
+        <div class="rc-hero-label">pergunta</div>
+        <div class="rc-hero-text">${esc(rc.hero)}</div>
+      </div>
+      <div class="rc-options">
+        ${rc.options.map((o,i) => `
+          <div class="rc-option" data-text="${esc(o.label)}">
+            <span class="opt-num">${i+1}</span>
+            <span class="opt-label">${esc(o.label)}</span>
+          </div>
+        `).join('')}
+      </div>`;
+    } else if (rc.type === 'permission') {
+      html += `<div class="rc-hero permission">
+        <div class="rc-hero-label">permissão</div>
+        <div class="rc-hero-text">${esc(rc.hero)}</div>
+        ${rc.command ? `<div class="rc-command"><code>${esc(rc.command)}</code></div>` : ''}
+      </div>
+      <div class="rc-options">
+        <div class="rc-option rc-approve" data-text="y">
+          <span class="opt-num">1</span><span class="opt-label">Aprovar</span>
+        </div>
+        <div class="rc-option rc-deny" data-text="n">
+          <span class="opt-num">2</span><span class="opt-label">Negar</span>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="rc-hero response">
+        <div class="rc-hero-label">resposta</div>
+        <div class="rc-hero-text">${esc(rc.hero)}</div>
+      </div>`;
+    }
+    if (rc.keywords?.length) {
+      html += `<div class="rc-keywords">${rc.keywords.map(k => `<span class="rc-kw">${esc(k)}</span>`).join('')}</div>`;
+    }
+  } else {
+    const label = isWait ? 'aguardando resposta' : 'em progresso';
+    const type = isWait ? 'question' : 'response';
+    const text = agent.waitingSummary || agent.lastOutput || 'Trabalhando...';
+    html += `<div class="rc-hero ${type}">
+      <div class="rc-hero-label">${label}</div>
+      <div class="rc-hero-text">${esc(text)}</div>
+    </div>`;
+  }
+
+  // Write area
+  html += `<div class="write-area" id="wa-${agent.paneId}">
+    <textarea class="write-input" placeholder="Instrução..." rows="2"></textarea>
+    <div class="write-submit"><button class="rc-btn primary" data-action="inline-send">Enviar</button></div>
+  </div>`;
+
+  html += `<div class="rc-actions">
+    <button class="rc-btn" data-action="terminal">Terminal ↗</button>
+    <button class="rc-btn primary" data-action="write">Escrever</button>
+  </div>`;
+
+  return html;
+}
+
+function bindCardEvents(row, agent) {
+  const paneId = row.dataset.pane;
+
+  row.querySelectorAll('.rc-option').forEach(opt => {
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      opt.classList.add('selected');
+      sendKeys(paneId, opt.dataset.text);
+      showSent(row);
+    });
+  });
+
+  row.querySelector('[data-action="terminal"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openTerminal(paneId);
+  });
+
+  row.querySelector('[data-action="write"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wa = row.querySelector('.write-area');
+    wa?.classList.toggle('visible');
+    if (wa?.classList.contains('visible')) wa.querySelector('.write-input')?.focus();
+  });
+
+  row.querySelector('[data-action="inline-send"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = row.querySelector('.write-input')?.value.trim();
+    if (text) { sendKeys(paneId, text); showSent(row); }
+  });
+
+  row.querySelector('.write-input')?.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const text = e.target.value.trim();
+      if (text) { sendKeys(paneId, text); showSent(row); }
+    }
+  });
+}
+
+function showSent(row) {
+  const card = row.querySelector('.response-card');
+  if (card) card.innerHTML = '<div class="sent-indicator">✓ Enviado</div>';
+  setTimeout(() => { state.expandedPane = null; state.selectedPane = null; renderList(); }, 1000);
+}
+
+function updateBottomBar() {
+  const bar = document.getElementById('bottom-bar');
+  if (state.selectedPane) {
+    const found = findAgent(state.selectedPane);
+    if (found) {
+      targetEl.innerHTML = `Enviar para <strong>${esc(found.agent.task || found.agent.windowName)}</strong>`;
+      bar.style.display = '';
+      return;
+    }
+  }
+  bar.style.display = 'none';
+}
+
+// ── Bottom bar ──────────────────────────────────────
+sendBtn.addEventListener('click', () => {
+  if (!state.selectedPane) return;
+  const text = inputEl.value.trim();
+  if (!text) return;
+  sendKeys(state.selectedPane, text);
+  inputEl.value = '';
+  sendBtn.style.background = '#2ed573';
+  setTimeout(() => sendBtn.style.background = '', 300);
+});
+
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+});
+
+inputEl.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ── Blink + timers ──────────────────────────────────
+setInterval(() => document.body.classList.toggle('blink-dim'), 1500);
+setInterval(() => {
+  document.querySelectorAll('.agent-time').forEach(el => {
+    const row = el.closest('.agent-row');
+    if (!row) return;
+    const ag = findAgent(row.dataset.pane);
+    if (ag) el.textContent = elapsed(ag.agent.interactionStartedAt);
+  });
+}, 30000);
+
+// ── Init ────────────────────────────────────────────
+connect();
+setTimeout(() => {
+  if (!state.connected && !state.data.fronts?.length) {
+    state.data = DEMO_DATA;
+    renderList();
+  }
+}, 2000);
+</script>
+</body>
+</html>

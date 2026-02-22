@@ -805,7 +805,7 @@ async function buildState() {
 
 // ── WebSocket server ──────────────────────────────────────────────────────
 
-const wss = new WebSocket.Server({ port: PORT });
+const wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
 wss.on('connection', (ws) => ws.send(cachedStateJson));
 
 function broadcast(json) {
@@ -830,7 +830,27 @@ async function tick() {
 
 // Debug + API HTTP server
 const http = require('http');
+const MOBILE_HTML = path.join(__dirname, 'mobile.html');
 http.createServer(async (req, res) => {
+  // ── CORS for mobile client ──
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // ── GET / or /mobile — serve mobile PWA ──
+  if (req.method === 'GET' && (req.url === '/' || req.url === '/mobile')) {
+    try {
+      const html = fs.readFileSync(MOBILE_HTML, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('mobile.html not found');
+    }
+    return;
+  }
+
   // ── POST /hook-stop — Claude Code hook signals agent stopped ──
   if (req.method === 'POST' && req.url === '/hook-stop') {
     let body = '';
@@ -1043,8 +1063,8 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
   }
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(lines.join('\n') + '\n');
-}).listen(7374, '127.0.0.1');
-console.log('Debug endpoint: http://127.0.0.1:7374/debug');
+}).listen(7374, '0.0.0.0');
+console.log('HTTP + API: http://0.0.0.0:7374 (mobile: /, debug: /debug)');
 
 ensureFiles();
 loadPaneTasks();
