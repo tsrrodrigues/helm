@@ -922,6 +922,10 @@ function formatTermOutput(raw) {
     
     if (!trimmed) return '';
     
+    // Message boundaries — add vertical gap before agent markers
+    if (/^[⏺❯›>$✻]/.test(trimmed) || /^Sautéed|^Brewed|^Baked/i.test(trimmed))
+      return '<div style="margin-top:16px"></div>' + escaped;
+    
     // Only highlight diffs and errors — everything else stays uniform
     if (/^✗|^ERROR|^Error:|FAIL/i.test(trimmed))
       return '<span class="t-error">' + escaped + '</span>';
