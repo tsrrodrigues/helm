@@ -594,6 +594,7 @@ const connEl = document.getElementById('conn-status');
 const inputEl = document.getElementById('bottom-input');
 const sendBtn = document.getElementById('send-btn');
 const targetEl = document.getElementById('bottom-target');
+// Note: bottom bar was removed from HTML; these may be null
 
 // ── Helpers ─────────────────────────────────────────
 const GLYPHS = ['⚙', '⚡', '◆', '★', '■', '△', '⚒', '☷', '✦', '✱'];
@@ -1060,37 +1061,11 @@ function showSent(row) {
 }
 
 function updateBottomBar() {
-  const bar = document.getElementById('bottom-bar');
-  if (state.selectedPane) {
-    const found = findAgent(state.selectedPane);
-    if (found) {
-      targetEl.innerHTML = `Enviar para <strong>${esc(found.agent.task || found.agent.windowName)}</strong>`;
-      bar.style.display = '';
-      return;
-    }
-  }
-  bar.style.display = 'none';
+  // bottom bar removed — no-op
 }
 
 // ── Bottom bar ──────────────────────────────────────
-sendBtn.addEventListener('click', () => {
-  if (!state.selectedPane) return;
-  const text = inputEl.value.trim();
-  if (!text) return;
-  sendKeys(state.selectedPane, text);
-  inputEl.value = '';
-  sendBtn.style.background = '#2ed573';
-  setTimeout(() => sendBtn.style.background = '', 300);
-});
-
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
-});
-
-inputEl.addEventListener('input', function() {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-});
+// bottom bar event listeners removed (HTML was removed)
 
 // ── Blink + timers ──────────────────────────────────
 setInterval(() => document.body.classList.toggle('blink-dim'), 1500);
