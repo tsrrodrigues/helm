@@ -1,0 +1,35 @@
+<!DOCTYPE html><html><body style="background:#111;color:#eee;font-family:monospace;padding:20px">
+<h2>Limpando cache...</h2>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function l(msg) { log.textContent += msg + '\n'; }
+
+async function clearAll() {
+  // Unregister all service workers
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    l('Service workers encontrados: ' + regs.length);
+    for (const reg of regs) {
+      await reg.unregister();
+      l('Unregistered: ' + reg.scope);
+    }
+  }
+  // Clear all caches
+  if ('caches' in window) {
+    const keys = await caches.keys();
+    l('Caches encontrados: ' + keys.length);
+    for (const key of keys) {
+      await caches.delete(key);
+      l('Deleted cache: ' + key);
+    }
+  }
+  l('');
+  l('✓ Tudo limpo! Redirecionando em 2s...');
+  setTimeout(() => {
+    window.location.href = '/?v=' + Date.now();
+  }, 2000);
+}
+
+clearAll().catch(e => l('Erro: ' + e.message));
+</script></body></html>
