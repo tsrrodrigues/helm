@@ -1010,6 +1010,40 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ── POST /kill-agent — kill a tmux window (agent) ──
+  if (req.method === 'POST' && req.url === '/kill-agent') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { paneId } = JSON.parse(body);
+        if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+        // Kill the tmux window containing this pane
+        const result = await execCmd('tmux', ['kill-window', '-t', paneId]);
+        // Clean up state
+        paneMemory.delete(paneId);
+        prevPaneStatus.delete(paneId);
+        interactionStart.delete(paneId);
+        paneTaskNames.delete(paneId);
+        paneTaskInitialized.delete(paneId);
+        paneWaitSummaries.delete(paneId);
+        hookWaitingOverride.delete(paneId);
+        paneResponseCards.delete(paneId);
+        savePaneTasks();
+        console.log(`[helm] kill-agent: pane=${paneId} ok=${result.ok}`);
+        // Force broadcast
+        cachedStateJson = '{}';
+        tick();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /hook-stop — Claude Code hook signals agent stopped ──
   if (req.method === 'POST' && req.url === '/hook-stop') {
     let body = '';

@@ -260,6 +260,7 @@ html, body {
 }
 .rc-btn:active { transform: scale(.97); }
 .rc-btn.primary { color: var(--accent-purple); border-color: rgba(108,99,255,.3); background: rgba(108,99,255,.08); }
+.rc-btn.danger { color: #e05050; border-color: rgba(224,80,80,.2); background: rgba(224,80,80,.05); flex: 0.6; }
 
 .write-area { display: none; margin-top: 10px; animation: rc-in 120ms ease-out; }
 .write-area.visible { display: block; }
@@ -1104,6 +1105,16 @@ function connect() {
   }
 }
 
+async function killAgent(paneId) {
+  if (!state.connected) { console.log('[demo] kill:', paneId); return; }
+  try {
+    await fetch(API_URL + '/kill-agent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paneId })
+    });
+  } catch (e) { console.log('[helm] kill failed:', e); }
+}
+
 async function sendKeys(paneId, text) {
   if (!state.connected) { console.log('[demo] send-keys:', paneId, text); return true; }
   try {
@@ -1284,6 +1295,7 @@ function buildCard(agent, front) {
   html += `<div class="rc-actions">
     <button class="rc-btn" data-action="terminal">Terminal ↗</button>
     <button class="rc-btn primary" data-action="write">Escrever</button>
+    <button class="rc-btn danger" data-action="kill">Encerrar</button>
   </div>`;
 
   return html;
@@ -1304,6 +1316,14 @@ function bindCardEvents(row, agent) {
   row.querySelector('[data-action="terminal"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     openTerminal(paneId);
+  });
+
+  row.querySelector('[data-action="kill"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!confirm('Encerrar este agente?')) return;
+    killAgent(paneId);
+    row.style.opacity = '0.3';
+    setTimeout(() => { state.expandedPane = null; state.selectedPane = null; renderList(); }, 1000);
   });
 
   row.querySelector('[data-action="write"]')?.addEventListener('click', (e) => {
