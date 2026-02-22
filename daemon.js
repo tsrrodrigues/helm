@@ -838,15 +838,24 @@ http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // ── GET / or /mobile — serve mobile PWA ──
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/mobile')) {
+  // ── Static files for PWA ──
+  const STATIC_FILES = {
+    '/': { file: 'mobile.html', type: 'text/html; charset=utf-8' },
+    '/mobile': { file: 'mobile.html', type: 'text/html; charset=utf-8' },
+    '/manifest.json': { file: 'manifest.json', type: 'application/manifest+json' },
+    '/sw.js': { file: 'sw.js', type: 'application/javascript' },
+    '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
+    '/icon-512.png': { file: 'icon-512.png', type: 'image/png' },
+  };
+  const staticEntry = req.method === 'GET' && STATIC_FILES[req.url];
+  if (staticEntry) {
     try {
-      const html = fs.readFileSync(MOBILE_HTML, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
+      const content = fs.readFileSync(path.join(__dirname, staticEntry.file));
+      res.writeHead(200, { 'Content-Type': staticEntry.type });
+      res.end(content);
     } catch (e) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('mobile.html not found');
+      res.end('not found');
     }
     return;
   }
