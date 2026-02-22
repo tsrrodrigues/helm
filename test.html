@@ -1,0 +1,26 @@
+<!DOCTYPE html><html><body style="background:#111;color:#eee;font-family:monospace;padding:20px">
+<h2>WS Debug</h2>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function l(msg) { log.textContent += msg + '\n'; }
+l('proto: ' + location.protocol);
+l('host: ' + location.hostname);
+const secure = location.protocol === 'https:';
+const wsUrl = secure ? 'wss://' + location.hostname + ':7374/ws' : 'ws://' + location.hostname + ':7373';
+l('wsUrl: ' + wsUrl);
+l('connecting...');
+try {
+  const ws = new WebSocket(wsUrl);
+  ws.onopen = () => l('CONNECTED! readyState=' + ws.readyState);
+  ws.onmessage = (e) => l('DATA: ' + e.data.slice(0,150) + '...');
+  ws.onerror = (e) => l('ERROR event fired');
+  ws.onclose = (e) => l('CLOSED: code=' + e.code + ' reason=' + e.reason + ' clean=' + e.wasClean);
+} catch(e) {
+  l('CATCH: ' + e.message);
+}
+fetch(location.protocol + '//' + location.hostname + ':7374/debug')
+  .then(r => { l('FETCH status: ' + r.status); return r.text(); })
+  .then(t => l('FETCH ok, len=' + t.length))
+  .catch(e => l('FETCH err: ' + e.message));
+</script></body></html>
