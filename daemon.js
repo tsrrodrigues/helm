@@ -35,8 +35,16 @@ function savePushSubs() {
   try { fs.writeFileSync(PUSH_SUBS_FILE, JSON.stringify(pushSubscriptions, null, 2)); } catch {}
 }
 
+// ── Push notification throttle: only one active at a time ──
+let pushPending = false;  // true = notification sent, user hasn't dismissed/read yet
+
 function sendPushNotification(title, body, tag) {
   if (!webpush || !pushSubscriptions.length) return;
+  if (pushPending) {
+    console.log('[helm] push suppressed (one already pending):', title);
+    return;
+  }
+  pushPending = true;
   const payload = JSON.stringify({ title, body, tag });
   for (const sub of [...pushSubscriptions]) {
     webpush.sendNotification(sub, payload).catch(err => {
@@ -47,6 +55,10 @@ function sendPushNotification(title, body, tag) {
       }
     });
   }
+}
+
+function clearPushPending() {
+  pushPending = false;
 }
 const PANE_CLAUDE_SESSIONS_FILE = path.join(HELM_DIR, 'pane-claude-sessions.json');
 
@@ -987,6 +999,15 @@ async function handleRequest(req, res) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
     }
+    return;
+  }
+
+  // ── POST /push-ack — user read/dismissed notification, allow new ones ──
+  if (req.method === 'POST' && req.url === '/push-ack') {
+    clearPushPending();
+    console.log('[helm] push ack received — next notification unlocked');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 

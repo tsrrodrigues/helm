@@ -1080,6 +1080,14 @@ function updateTerminalView() {
 // ── WebSocket ───────────────────────────────────────
 let ws = null;
 
+// Notify server user is active — unlocks next push notification
+function ackPush() {
+  fetch(API_URL + '/push-ack', { method: 'POST' }).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') ackPush();
+});
+
 function connect() {
   try {
     ws = new WebSocket(WS_URL);
@@ -1087,6 +1095,7 @@ function connect() {
       state.connected = true;
       connEl.textContent = 'online';
       connEl.className = 'conn-status connected';
+      ackPush();  // user opened app — clear pending notification
     };
     ws.onmessage = (e) => {
       try {
