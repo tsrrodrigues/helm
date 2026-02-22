@@ -367,6 +367,24 @@ html, body {
 .term-output .t-prompt { color: var(--accent-purple); font-weight: 700; display: block; margin-top: 8px; }
 .term-output .t-activity { color: #63b3ed; }
 .term-output .t-test-pass { color: #2ed573; padding-left: 8px; }
+/* Table rows (converted from ASCII tables) */
+.t-table-row {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; margin: 4px 0;
+  background: rgba(255,255,255,.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.05);
+}
+.t-table-cell {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.t-cell-label {
+  font-size: 11px; color: #666; font-weight: 600; flex-shrink: 0;
+}
+.t-cell-value {
+  font-size: 13px; color: #ccc; font-weight: 600; text-align: right;
+}
+
 .term-output .t-question {
   color: #ffa502; font-weight: 600;
   display: block; margin-top: 6px;
@@ -731,23 +749,99 @@ function stripAnsi(str) {
     .replace(/[\x00-\x08\x0e-\x1f]/g, '');
 }
 
+function parseAsciiTable(lines) {
+  // Detect and convert ASCII box-drawing tables to mobile-friendly format
+  const rows = [];
+  let headers = [];
+  for (const line of lines) {
+    const t = line.trim();
+    // Skip border lines (┌─┬┐├─┼┤└─┴┘ and plain --- variants)
+    if (/^[┌┬┐├┼┤└┴┘─│+\-|=\s]+$/.test(t)) continue;
+    // Extract cell content from │ delimited rows
+    if (/│/.test(t) || (/\|/.test(t) && t.split('|').length >= 3)) {
+      const sep = /│/.test(t) ? '│' : '|';
+      const cells = t.split(sep).map(c => c.trim()).filter(c => c !== '');
+      if (cells.length > 0) {
+        if (!headers.length) headers = cells;
+        else rows.push(cells);
+      }
+    }
+  }
+  if (!headers.length && !rows.length) return null;
+  
+  let html = '';
+  for (const row of rows) {
+    html += '<div class="t-table-row">';
+    row.forEach((cell, i) => {
+      const label = headers[i] || '';
+      html += `<div class="t-table-cell"><span class="t-cell-label">${esc(label)}</span><span class="t-cell-value">${esc(cell)}</span></div>`;
+    });
+    html += '</div>';
+  }
+  // If only headers, show them as a single row
+  if (!rows.length && headers.length) {
+    html += '<div class="t-table-row">';
+    headers.forEach(h => {
+      html += `<div class="t-table-cell"><span class="t-cell-value">${esc(h)}</span></div>`;
+    });
+    html += '</div>';
+  }
+  return html;
+}
+
 function formatTermOutput(raw) {
   const clean = stripAnsi(raw);
-  const lines = clean.split('\n')
-    // Remove Claude Code status bar lines
-    .filter(l => {
+  const allLines = clean.split('\n');
+  
+  // First pass: find table blocks and convert them
+  const chunks = []; // { type: 'lines'|'table', content }
+  let buf = [];
+  let inTable = false;
+  
+  for (const line of allLines) {
+    const t = line.trim();
+    const isTableLine = /[┌┬┐├┼┤└┴┘│]/.test(t) || (/^\|.*\|/.test(t) && t.split('|').length >= 3);
+    const isBorderOnly = /^[┌┬┐├┼┤└┴┘─│+\-|=\s]+$/.test(t);
+    
+    if (isTableLine || isBorderOnly) {
+      if (!inTable && buf.length) {
+        chunks.push({ type: 'lines', content: buf });
+        buf = [];
+      }
+      inTable = true;
+      buf.push(line);
+    } else {
+      if (inTable && buf.length) {
+        chunks.push({ type: 'table', content: buf });
+        buf = [];
+      }
+      inTable = false;
+      buf.push(line);
+    }
+  }
+  if (buf.length) chunks.push({ type: inTable ? 'table' : 'lines', content: buf });
+  
+  // Second pass: render each chunk
+  let result = '';
+  for (const chunk of chunks) {
+    if (chunk.type === 'table') {
+      const tableHtml = parseAsciiTable(chunk.content);
+      if (tableHtml) { result += tableHtml; continue; }
+    }
+    // Regular lines — filter noise
+    const lines = chunk.content.filter(l => {
       const t = l.trim();
-      if (!t) return false; // remove empty lines
-      if (/^[─━═\s]+$/.test(t)) return false; // remove separator-only lines
-      if (/^⏵/.test(t)) return false; // status bar
-      if (/bypass permissions on/i.test(t)) return false; // status bar
-      if (/ctrl\+[a-z] to /i.test(t)) return false; // hints
-      if (/esc to interrupt/i.test(t)) return false; // hints
-      if (/shift\+tab to cycle/i.test(t)) return false; // hints
+      if (!t) return false;
+      if (/^[─━═\s]+$/.test(t)) return false;
+      if (/^⏵/.test(t)) return false;
+      if (/bypass permissions on/i.test(t)) return false;
+      if (/ctrl\+[a-z] to /i.test(t)) return false;
+      if (/esc to interrupt/i.test(t)) return false;
+      if (/shift\+tab to cycle/i.test(t)) return false;
       return true;
     });
   
-  const formatted = lines.map(line => {
+    const formatted = lines.map(line => {
     const trimmed = line.trim();
     const escaped = esc(line);
     
@@ -801,8 +895,10 @@ function formatTermOutput(raw) {
     // Default
     return escaped;
   });
-  
-  return formatted.join('\n');
+    
+    result += formatted.join('\n') + '\n';
+  }
+  return result;
 }
 
 // Terminal auto-refresh
