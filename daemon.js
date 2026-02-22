@@ -1034,6 +1034,19 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
     return;
   }
 
+  // ── GET /pane-output?paneId=X — full terminal output for mobile ──
+  if (req.method === 'GET' && req.url.startsWith('/pane-output')) {
+    const url = new URL(req.url, 'http://localhost');
+    const paneId = url.searchParams.get('paneId');
+    if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+    // Capture full visible pane content (not just last 20 lines)
+    const fullRes = await execCmd('tmux', ['capture-pane', '-p', '-S', '-', '-t', paneId], 5000);
+    const output = fullRes.ok ? fullRes.stdout : '';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, paneId, output }));
+    return;
+  }
+
   // ── GET /debug — raw pane captures + detection results ──
   if (req.url !== '/debug') { res.writeHead(404); res.end(); return; }
   const panes = await listTmuxPanes();

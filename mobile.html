@@ -615,7 +615,7 @@ function showView(id) {
   document.getElementById('view-' + id).classList.add('active');
 }
 
-function openTerminal(paneId) {
+async function openTerminal(paneId) {
   state.terminalPane = paneId;
   const found = findAgent(paneId);
   if (!found) return;
@@ -626,16 +626,27 @@ function openTerminal(paneId) {
   document.getElementById('term-subtitle').textContent = project + ' · ' + agent.command;
   document.getElementById('term-dot').className = 'term-status-dot ' + (agent.status === 'waiting' ? 'wait' : 'run');
 
-  // Render terminal output
   const outputEl = document.getElementById('term-output');
-  const raw = agent.terminalOutput || agent.lastOutput || '';
-  outputEl.innerHTML = formatTermOutput(raw);
+  outputEl.innerHTML = '<span class="t-dim">Carregando...</span>';
+  showView('terminal');
 
-  // Scroll to bottom
+  // Fetch full pane output from daemon
+  try {
+    const r = await fetch(API_URL + '/pane-output?paneId=' + encodeURIComponent(paneId));
+    if (r.ok) {
+      const data = await r.json();
+      outputEl.innerHTML = formatTermOutput(data.output || '');
+    } else {
+      outputEl.innerHTML = formatTermOutput(agent.lastOutput || 'Sem output disponível');
+    }
+  } catch {
+    outputEl.innerHTML = formatTermOutput(agent.lastOutput || 'Erro ao carregar output');
+  }
+
+  // Scroll to bottom + start auto-refresh
   const wrap = document.getElementById('term-output-wrap');
   requestAnimationFrame(() => wrap.scrollTop = wrap.scrollHeight);
-
-  showView('terminal');
+  startTermRefresh();
 }
 
 function formatTermOutput(raw) {
@@ -660,9 +671,39 @@ function formatTermOutput(raw) {
   return html;
 }
 
+// Terminal auto-refresh
+let termRefreshInterval = null;
+async function refreshTerminal() {
+  if (!state.terminalPane) return;
+  try {
+    const r = await fetch(API_URL + '/pane-output?paneId=' + encodeURIComponent(state.terminalPane));
+    if (!r.ok) return;
+    const data = await r.json();
+    const outputEl = document.getElementById('term-output');
+    const wrap = document.getElementById('term-output-wrap');
+    const wasAtBottom = wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 30;
+    outputEl.innerHTML = formatTermOutput(data.output || '');
+    if (wasAtBottom) wrap.scrollTop = wrap.scrollHeight;
+  } catch {}
+  // Update status dot
+  const found = findAgent(state.terminalPane);
+  if (found) {
+    document.getElementById('term-dot').className = 'term-status-dot ' + (found.agent.status === 'waiting' ? 'wait' : 'run');
+  }
+}
+
+function startTermRefresh() {
+  stopTermRefresh();
+  termRefreshInterval = setInterval(refreshTerminal, 3000);
+}
+function stopTermRefresh() {
+  if (termRefreshInterval) { clearInterval(termRefreshInterval); termRefreshInterval = null; }
+}
+
 // Terminal back button
 document.getElementById('term-back').addEventListener('click', () => {
   state.terminalPane = null;
+  stopTermRefresh();
   showView('list');
 });
 
