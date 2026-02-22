@@ -167,6 +167,20 @@ html, body {
 .rc-hero.response .rc-hero-text { color: #b0cfe0; }
 .rc-hero.permission .rc-hero-text { color: #e08080; }
 
+/* Summary list in cards */
+.rc-summary-list {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.rc-summary-item {
+  font-size: 12px; color: #bbb; line-height: 1.4;
+  padding-left: 14px; position: relative;
+}
+.rc-summary-item::before {
+  content: '›';
+  position: absolute; left: 0;
+  color: #ffa502; font-weight: 700;
+}
+
 .rc-command {
   margin-top: 8px; padding: 8px 10px;
   background: rgba(0,0,0,.3); border-radius: 6px;
@@ -597,6 +611,17 @@ function glyphFor(id) {
 
 function esc(t) { return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+function cleanOutput(text) {
+  if (!text) return '';
+  return text
+    .replace(/\s*bypass permissions on\b.*$/i, '')
+    .replace(/\s*shift\+tab to cycle\b.*$/i, '')
+    .replace(/\s*ctrl\+[a-z] to \w+.*$/i, '')
+    .replace(/\s*\d+ files? \+\d+ -\d+/i, '')
+    .replace(/[⏵─]+/g, '')
+    .trim();
+}
+
 function elapsed(ms) {
   if (!ms) return '';
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -852,9 +877,10 @@ function buildRow(agent, front) {
   const project = (front.projectDir || front.sessionName || '').split('/').pop();
   const statusChar = isWait ? '❯' : '✱';
   const statusClass = isWait ? 'wait' : 'run';
-  const output = isWait
-    ? (agent.waitingSummary?.split('\n')[0] || agent.lastOutput || 'aguardando')
-    : (agent.lastOutput || 'trabalhando...');
+  const rawOutput = isWait
+    ? (agent.waitingSummary?.split('\n')[0]?.replace(/^[•\-]\s*/, '') || cleanOutput(agent.lastOutput) || 'aguardando')
+    : (cleanOutput(agent.lastOutput) || 'trabalhando...');
+  const output = rawOutput;
 
   row.className = 'agent-row accent-' + ci + (isWait ? ' is-wait' : '') + (isExpanded ? ' expanded' : '');
 
@@ -940,13 +966,30 @@ function buildCard(agent, front) {
       html += `<div class="rc-keywords">${rc.keywords.map(k => `<span class="rc-kw">${esc(k)}</span>`).join('')}</div>`;
     }
   } else {
-    const label = isWait ? 'aguardando resposta' : 'em progresso';
-    const type = isWait ? 'question' : 'response';
-    const text = agent.waitingSummary || agent.lastOutput || 'Trabalhando...';
-    html += `<div class="rc-hero ${type}">
-      <div class="rc-hero-label">${label}</div>
-      <div class="rc-hero-text">${esc(text)}</div>
-    </div>`;
+    if (isWait) {
+      // Parse waitingSummary bullets into structured list
+      const summary = agent.waitingSummary || '';
+      const bullets = summary.split('\n').map(l => l.replace(/^[•\-]\s*/, '').trim()).filter(Boolean);
+      if (bullets.length > 0) {
+        html += `<div class="rc-hero question">
+          <div class="rc-hero-label">aguardando resposta</div>
+          <div class="rc-summary-list">
+            ${bullets.map(b => `<div class="rc-summary-item">${esc(b)}</div>`).join('')}
+          </div>
+        </div>`;
+      } else {
+        html += `<div class="rc-hero question">
+          <div class="rc-hero-label">aguardando resposta</div>
+          <div class="rc-hero-text">Agente parou e aguarda sua interação</div>
+        </div>`;
+      }
+    } else {
+      const text = cleanOutput(agent.lastOutput) || 'Trabalhando...';
+      html += `<div class="rc-hero response">
+        <div class="rc-hero-label">em progresso</div>
+        <div class="rc-hero-text">${esc(text)}</div>
+      </div>`;
+    }
   }
 
   // Write area
