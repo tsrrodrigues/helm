@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld('helm', {
   manualRenameAgent: (paneId, name) => ipcRenderer.invoke('manual-rename-agent', paneId, name),
   resizePill: (pillWidth) => ipcRenderer.send('resize-pill', pillWidth),
   forkSession: (sessionName, claudeSessionId, panePath, weztermTabId) =>
-    ipcRenderer.invoke('fork-session', sessionName, claudeSessionId, panePath, weztermTabId)
+    ipcRenderer.invoke('fork-session', sessionName, claudeSessionId, panePath, weztermTabId),
+  sendKeys: (paneId, text) => ipcRenderer.invoke('send-keys', paneId, text)
 });

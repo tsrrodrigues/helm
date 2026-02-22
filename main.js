@@ -675,3 +675,25 @@ ipcMain.handle('manual-rename-agent', async (_e, paneId, name) => {
     req.end();
   });
 });
+
+ipcMain.handle('send-keys', async (_e, paneId, text) => {
+  if (!paneId || text == null) return { ok: false, error: 'missing paneId or text' };
+  const http = require('http');
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({ paneId, text });
+    const req = http.request('http://127.0.0.1:7374/send-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+    }, (res) => {
+      let body = '';
+      res.on('data', d => { body += d; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, error: 'parse error' }); }
+      });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.setTimeout(10000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.write(payload);
+    req.end();
+  });
+});

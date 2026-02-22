@@ -60,6 +60,7 @@ const paneTaskNames = new Map();    // paneId → AI-generated short task name
 const paneTaskInitialized = new Set(); // panes that already got an initial name
 const paneWaitSummaries = new Map();   // paneId → AI-generated context summary when waiting
 const hookWaitingOverride = new Map(); // paneId → { timestamp, cwd, sessionId }
+const paneResponseCards = new Map();   // paneId → { type, hero, options, keywords, kpis, command }
 const paneClaudeSessionIds = new Map(); // paneId → Claude Code session UUID (persisted)
 const HOOK_TTL_MS = 30000; // 30s TTL for hook overrides
 let cachedState = { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
@@ -582,6 +583,72 @@ Reply with ONLY the bullets.`;
   }
 }
 
+// ── Response card parsing ─────────────────────────────────────────────────
+
+function parseResponseCard(terminalSnapshot, lastAssistantMessage) {
+  const text = lastAssistantMessage || terminalSnapshot || '';
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Detect numbered options (1. Foo, 2. Bar, etc.)
+  const optionLines = lines.filter(l => /^\d+[\.\)]\s+/.test(l));
+  if (optionLines.length >= 2) {
+    const options = optionLines.map(l => {
+      const label = l.replace(/^\d+[\.\)]\s+/, '').trim();
+      // Extract keywords from option text
+      const tags = extractCardKeywords(label);
+      return { label, tags };
+    });
+    // The question is usually the line before the options
+    const firstOptIdx = lines.indexOf(optionLines[0].trim());
+    const questionLines = lines.slice(Math.max(0, firstOptIdx - 3), firstOptIdx);
+    const hero = questionLines.join(' ').trim() || 'Escolha uma opção';
+    const keywords = extractCardKeywords(text);
+    return { type: 'question', hero, options, keywords, kpis: [] };
+  }
+
+  // Detect permission prompts
+  if (/\(y\/n\)/i.test(text) || /allow|permit|approve|deny/i.test(text)) {
+    const cmdMatch = text.match(/(?:run|execute|command):\s*(.+)/i) || text.match(/`([^`]+)`/);
+    const command = cmdMatch ? cmdMatch[1].trim() : '';
+    const hero = lines.find(l => /\?/.test(l)) || 'Permissão necessária';
+    const keywords = extractCardKeywords(text);
+    return { type: 'permission', hero, command, keywords, kpis: [] };
+  }
+
+  // Default: response/summary card
+  const hero = lastAssistantMessage
+    ? lastAssistantMessage.split('\n')[0].slice(0, 200)
+    : (lines[lines.length - 1] || '').slice(0, 200);
+  const keywords = extractCardKeywords(text);
+  const kpis = extractKpis(text);
+  return { type: 'response', hero, keywords, kpis };
+}
+
+function extractCardKeywords(text) {
+  const keywords = [];
+  // File paths and names
+  const files = text.match(/[\w\-]+\.\w{1,6}/g) || [];
+  files.forEach(f => { if (!keywords.includes(f)) keywords.push(f); });
+  // Function names
+  const funcs = text.match(/\b\w+\(\)/g) || [];
+  funcs.forEach(f => { if (!keywords.includes(f)) keywords.push(f); });
+  // Technical terms (camelCase, PascalCase)
+  const terms = text.match(/\b[a-z]+[A-Z]\w+/g) || [];
+  terms.forEach(t => { if (!keywords.includes(t)) keywords.push(t); });
+  return keywords.slice(0, 8);
+}
+
+function extractKpis(text) {
+  const kpis = [];
+  const filesMatch = text.match(/(\d+)\s*(?:files?|arquivos?)/i);
+  if (filesMatch) kpis.push({ num: filesMatch[1], label: 'arquivos', color: 'blue' });
+  const linesMatch = text.match(/[+]?(\d+)\s*(?:lines?|linhas?)/i);
+  if (linesMatch) kpis.push({ num: '+' + linesMatch[1], label: 'linhas', color: 'green' });
+  const testsMatch = text.match(/(\d+)\s*(?:tests?|testes?)/i);
+  if (testsMatch) kpis.push({ num: testsMatch[1], label: 'testes', color: 'green' });
+  return kpis;
+}
+
 // ── Build state ───────────────────────────────────────────────────────────
 
 async function buildState() {
@@ -689,7 +756,8 @@ async function buildState() {
       waitingSummary: st.status === 'waiting' ? (paneWaitSummaries.get(pane.paneId) || null) : null,
       interactionStartedAt: interactionStart.get(pane.paneId) || null,
       panePath: pane.panePath,
-      claudeSessionId: paneClaudeSessionIds.get(pane.paneId) || resolveClaudeSessionFromFs(pane.panePath)
+      claudeSessionId: paneClaudeSessionIds.get(pane.paneId) || resolveClaudeSessionFromFs(pane.panePath),
+      responseCard: paneResponseCards.get(pane.paneId) || null
     });
   }
 
@@ -769,13 +837,20 @@ http.createServer(async (req, res) => {
     req.on('data', d => { body += d; });
     req.on('end', async () => {
       try {
-        const { paneId, cwd, sessionId } = JSON.parse(body);
+        const { paneId, cwd, sessionId, lastAssistantMessage, terminalSnapshot } = JSON.parse(body);
         if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
 
         const prevStatus = prevPaneStatus.get(paneId);
         hookWaitingOverride.set(paneId, { timestamp: Date.now(), cwd: cwd || '', sessionId: sessionId || '' });
         if (sessionId) { paneClaudeSessionIds.set(paneId, sessionId); savePaneClaudeSessions(); }
         console.log(`[helm] hook-stop: pane=${paneId} prev=${prevStatus || 'unknown'} sessionId=${sessionId || '(none)'}`);
+
+        // Parse response card from hook data
+        if (lastAssistantMessage || terminalSnapshot) {
+          const card = parseResponseCard(terminalSnapshot || '', lastAssistantMessage || '');
+          paneResponseCards.set(paneId, card);
+          console.log(`[helm] hook-stop: responseCard type=${card.type} for pane=${paneId}`);
+        }
 
         // If transitioning running→waiting, generate wait summary (fire-and-forget)
         if (prevStatus === 'running') {
@@ -784,6 +859,37 @@ http.createServer(async (req, res) => {
           const pane = panes?.find(p => p.paneId === paneId);
           if (pane) generateWaitSummary(paneId, output, pane.panePath);
         }
+
+        // Force immediate broadcast
+        cachedStateJson = '{}';
+        tick();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── POST /hook-notification — Claude Code notification hook (permissions, dialogs) ──
+  if (req.method === 'POST' && req.url === '/hook-notification') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { paneId, message, terminalSnapshot } = JSON.parse(body);
+        if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+
+        // Mark as waiting via hook override
+        hookWaitingOverride.set(paneId, { timestamp: Date.now(), cwd: '', sessionId: '' });
+
+        // Parse response card from notification data
+        const card = parseResponseCard(terminalSnapshot || '', message || '');
+        paneResponseCards.set(paneId, card);
+        console.log(`[helm] hook-notification: pane=${paneId} type=${card.type} message=${(message || '').slice(0, 60)}`);
 
         // Force immediate broadcast
         cachedStateJson = '{}';
@@ -865,6 +971,42 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
           res.end(JSON.stringify({ ok: false, error: 'AI returned empty' }));
         }
       } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── POST /send-keys — send text to a tmux pane ──
+  if (req.method === 'POST' && req.url === '/send-keys') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', async () => {
+      try {
+        const { paneId, text } = JSON.parse(body);
+        if (!paneId || text == null) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId or text' })); return; }
+
+        // Send literal text then Enter
+        const sendRes = await execCmd('tmux', ['send-keys', '-t', paneId, '-l', text]);
+        if (!sendRes.ok) throw new Error('send-keys literal failed: ' + sendRes.stderr);
+        const enterRes = await execCmd('tmux', ['send-keys', '-t', paneId, 'Enter']);
+        if (!enterRes.ok) throw new Error('send-keys Enter failed: ' + enterRes.stderr);
+
+        // Clear hook override and response card — user responded, agent is working
+        hookWaitingOverride.delete(paneId);
+        paneWaitSummaries.delete(paneId);
+        paneResponseCards.delete(paneId);
+        console.log(`[helm] send-keys: pane=${paneId} text=${text.slice(0, 60)}${text.length > 60 ? '...' : ''}`);
+
+        // Force immediate broadcast
+        cachedStateJson = '{}';
+        tick();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        console.error('[helm] send-keys error:', e.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: e.message }));
       }

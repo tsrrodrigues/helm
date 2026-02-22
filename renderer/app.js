@@ -2,12 +2,10 @@ const state = {
   data: { fronts: [], activePane: null, activeSessionName: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } },
   open: false,
   selectedPane: null,
+  expandedPane: null,       // paneId or null — which agent row is expanded
   inlineEditSession: null,
   shortcutMode: false,
-  focusMode: false,   // true = showing summary panel connected to waiting agent
-  focusAgent: null,    // { agent, front } for summary panel
   frontOrder: [],
-  openFronts: new Set(),
   dismissedPanes: new Set(),
   layout: null,  // set on startup from main process (window is always expanded)
   creatingSession: false,
@@ -16,11 +14,13 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const pill         = $('pill');
-const panel        = $('panel');
-const frontsEl     = $('fronts');
-const connectorSvg = $('connector-svg');
-const summaryPanelEl = $('summary-panel');
+const pill       = $('pill');
+const panel      = $('panel');
+const rowsEl     = $('rows');
+const pillBadgesEl = $('pill-badges');
+
+// Curated glyph set — high-contrast Unicode symbols for agent badges
+const GLYPHS = ['⚙', '⚡', '◆', '★', '■', '△', '⚒', '☷', '✦', '✱'];
 
 // ── Mouse passthrough ─────────────────────────────────────────────────────
 // sendSync ensures cursor switches in same frame (no async lag).
@@ -66,16 +66,6 @@ document.addEventListener('keydown', (e) => {
     return; // let input handle Enter etc.
   }
 
-  // Handle focus mode keys
-  if (state.focusMode && state.open) {
-    if (e.key === 'Enter') { e.preventDefault(); focusNavigate(); }
-    else if (e.key === 'x') { e.preventDefault(); focusDismiss(); }
-    else if (e.key === 'v') { e.preventDefault(); navigateToEditor(); }
-    else if (e.key === 'Tab') { e.preventDefault(); exitFocusMode(); }
-    else if (e.key === 'Escape') { e.preventDefault(); togglePanel(false); if (state.shortcutMode) window.helm.blurWindow(); }
-    return;
-  }
-
   // Handle delete confirmation
   if (state.confirmingDelete) {
     if (e.key === 'y' || e.key === 'Enter') { e.preventDefault(); executeDelete(); }
@@ -92,6 +82,36 @@ document.addEventListener('keydown', (e) => {
       navigateTo(agents[idx]);
       togglePanel(false);
       window.helm.blurWindow();
+    }
+    return;
+  }
+
+  // Ctrl+1..9: select response card option (Ctrl+last = open write mode)
+  if (e.ctrlKey && e.key >= '1' && e.key <= '9' && state.open && state.expandedPane) {
+    e.preventDefault();
+    const row = document.querySelector(`.row[data-pane="${state.expandedPane}"]`);
+    const options = row?.querySelectorAll('.rc-option');
+    const idx = parseInt(e.key, 10) - 1;
+    if (options && options.length > 0) {
+      if (idx < options.length) {
+        // Click the option
+        const text = options[idx].dataset.optionText;
+        if (text) sendResponseToAgent(state.expandedPane, text);
+      } else {
+        // Beyond last option: open write mode
+        const writeBox = row?.querySelector('.rc-write');
+        if (writeBox) {
+          writeBox.classList.add('visible');
+          writeBox.querySelector('.rc-write-input')?.focus();
+        }
+      }
+    } else {
+      // No options: open write mode
+      const writeBox = row?.querySelector('.rc-write');
+      if (writeBox) {
+        writeBox.classList.add('visible');
+        writeBox.querySelector('.rc-write-input')?.focus();
+      }
     }
     return;
   }
@@ -137,8 +157,15 @@ document.addEventListener('keydown', (e) => {
     navigateToEditor();
   } else if (e.key === 'Escape' && state.open) {
     e.preventDefault();
-    togglePanel(false);
-    if (state.shortcutMode) window.helm.blurWindow();
+    if (state.expandedPane) {
+      // First Escape: collapse expanded card
+      state.expandedPane = null;
+      render();
+    } else {
+      // Second Escape: close panel
+      togglePanel(false);
+      if (state.shortcutMode) window.helm.blurWindow();
+    }
   }
 });
 
@@ -267,14 +294,16 @@ function applyLayout() {
   panel.style.top = l.panelOffsetY + 'px';
   panel.style.width = l.panelW + 'px';
 
-  // Dynamic fronts max-height: panelH minus header, footer, and padding
+  // Dynamic rows max-height: panelH minus header, footer, and padding
   // so content grows without scroll until screen is full
   if (l.panelH > 0) {
     // panel padding (16+14) + header .ph (~32) + footer .pf (~44) ≈ 106
-    const frontsMaxH = l.panelH - 106;
-    frontsEl.style.maxHeight = Math.max(100, frontsMaxH) + 'px';
+    const rowsMaxH = l.panelH - 106;
+    rowsEl.style.maxHeight = Math.max(100, rowsMaxH) + 'px';
+    rowsEl.style.overflowY = 'auto';
   } else {
-    frontsEl.style.maxHeight = '';
+    rowsEl.style.maxHeight = '';
+    rowsEl.style.overflowY = '';
   }
 }
 
@@ -292,29 +321,19 @@ function togglePanel(force) {
     state.open = true;
     panel.classList.remove('closing', 'visible');
 
-    // Check for undismissed waiting agents → show summary panel
+    // Auto-expand oldest undismissed waiting agent
     const focusTarget = getOldestUndismissedWaiting();
     if (focusTarget) {
-      state.focusMode = true;
-      state.focusAgent = focusTarget;
+      state.expandedPane = focusTarget.agent.paneId;
+      state.selectedPane = { ...focusTarget.agent, sessionName: focusTarget.front.sessionName, weztermTabId: focusTarget.front.weztermTabId };
     } else {
-      state.focusMode = false;
-      state.focusAgent = null;
+      state.expandedPane = null;
     }
-    // Always expand all fronts when opening
-    for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
     render();
 
-    // Fade in panel on next frame, then position summary after transition
+    // Fade in panel on next frame
     requestAnimationFrame(() => {
       panel.classList.add('visible');
-      if (state.focusMode && state.focusAgent) {
-        panel.addEventListener('transitionend', function onPanelOpen(e) {
-          if (e.target !== panel) return;
-          panel.removeEventListener('transitionend', onPanelOpen);
-          positionSummaryConnector();
-        });
-      }
     });
   } else {
     // ── CLOSE — fade out panel, then collapse window ──
@@ -328,12 +347,10 @@ function togglePanel(force) {
       _animating = false;
       state.open = false;
       state.shortcutMode = false;
-      state.focusMode = false;
-      state.focusAgent = null;
+      state.expandedPane = null;
       state.selectedPane = null;
       state.creatingSession = false;
       state.confirmingDelete = null;
-      hideSummaryPanel();
       render();
 
       // Collapse window to pill size — reduces GPU/WindowServer compositing area ~95%
@@ -365,7 +382,6 @@ function navigateTo(agent) {
 function agentTag(command) {
   const c = String(command || '').toLowerCase();
   if (c.includes('codex')) return 'codex';
-  // Claude Code reports version as command (e.g. "2.1.37"), treat as claude
   return 'claude';
 }
 
@@ -393,7 +409,24 @@ function projectColor(name) {
   return ((h % 6) + 6) % 6; // always positive 0-5
 }
 
-// ── Focus mode helpers ──────────────────────────────────────────────────
+// Deterministic glyph for agent based on paneId hash
+function glyphForAgent(paneId) {
+  let h = 0;
+  for (let i = 0; i < paneId.length; i++) h = ((h << 5) - h + paneId.charCodeAt(i)) | 0;
+  return GLYPHS[((h % GLYPHS.length) + GLYPHS.length) % GLYPHS.length];
+}
+
+// Look up agent from current state by paneId (avoids stale closures in event handlers)
+function findAgentByPane(paneId) {
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.paneId === paneId) return { ...a, sessionName: f.sessionName, weztermTabId: f.weztermTabId };
+    }
+  }
+  return null;
+}
+
+// ── Focus helpers ────────────────────────────────────────────────────────
 
 function getOldestUndismissedWaiting() {
   let oldest = null;
@@ -412,36 +445,6 @@ function getOldestUndismissedWaiting() {
   return { agent: oldest, front: oldestFront };
 }
 
-function exitFocusMode() {
-  state.focusMode = false;
-  state.focusAgent = null;
-  for (const f of (state.data.fronts || [])) state.openFronts.add(f.sessionName);
-  render();
-}
-
-function focusDismiss() {
-  if (!state.focusAgent) return;
-  state.dismissedPanes.add(state.focusAgent.agent.paneId);
-  // Try next waiting
-  const next = getOldestUndismissedWaiting();
-  if (next) {
-    state.focusAgent = next;
-  } else {
-    exitFocusMode();
-    return;
-  }
-  render();
-}
-
-function focusNavigate() {
-  if (!state.focusAgent) return;
-  const { agent, front } = state.focusAgent;
-  state.dismissedPanes.add(agent.paneId);
-  window.helm.navigateToPane(front.sessionName, agent.windowName, agent.paneId, front.weztermTabId);
-  togglePanel(false);
-  window.helm.blurWindow();
-}
-
 // ── Keyboard navigation helpers ───────────────────────────────────────
 
 function getNavigableAgents() {
@@ -456,44 +459,56 @@ function getNavigableAgents() {
 
 function preselectAgent(freshPane) {
   const agents = getNavigableAgents();
-  if (!agents.length) { state.selectedPane = null; return; }
+  if (!agents.length) { state.selectedPane = null; state.expandedPane = null; return; }
+
+  let selected = null;
 
   // Top priority: fresh pane ID from tmux (queried at shortcut time, always accurate)
   if (freshPane) {
-    const freshMatch = agents.find(a => a.paneId === freshPane);
-    if (freshMatch) { state.selectedPane = freshMatch; ensureSelectedVisible(); return; }
+    selected = agents.find(a => a.paneId === freshPane);
   }
 
-  const activeSession = state.data?.activeSessionName;
-  const activeAgents = activeSession ? agents.filter(a => a.sessionName === activeSession) : [];
+  if (!selected) {
+    const activeSession = state.data?.activeSessionName;
+    const activeAgents = activeSession ? agents.filter(a => a.sessionName === activeSession) : [];
 
-  // Prefer waiting agent from active session (oldest first, not dismissed)
-  const oldest = state.data?.summary?.oldestWaiting;
-  if (oldest && activeAgents.length) {
-    const match = activeAgents.find(a => a.paneId === oldest.paneId && !state.dismissedPanes.has(a.paneId));
-    if (match) { state.selectedPane = match; ensureSelectedVisible(); return; }
+    // Prefer waiting agent from active session (oldest first, not dismissed)
+    const oldest = state.data?.summary?.oldestWaiting;
+    if (!selected && oldest && activeAgents.length) {
+      selected = activeAgents.find(a => a.paneId === oldest.paneId && !state.dismissedPanes.has(a.paneId));
+    }
+
+    // Fallback: first waiting from active session (not dismissed)
+    if (!selected) {
+      selected = activeAgents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
+    }
+
+    // Fallback: the active window's pane in this session
+    if (!selected) {
+      const activeFront = state.data?.fronts?.find(f => f.sessionName === activeSession);
+      if (activeFront?.activePaneId && activeAgents.length) {
+        selected = activeAgents.find(a => a.paneId === activeFront.activePaneId);
+      }
+    }
+
+    // Fallback: first agent from active session
+    if (!selected && activeAgents.length) {
+      selected = activeAgents[0];
+    }
+
+    // Fallback: first waiting globally (not dismissed)
+    if (!selected) {
+      selected = agents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
+    }
+
+    // Fallback: first agent
+    if (!selected) {
+      selected = agents[0];
+    }
   }
 
-  // Fallback: first waiting from active session (not dismissed)
-  const activeWaiting = activeAgents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
-  if (activeWaiting) { state.selectedPane = activeWaiting; ensureSelectedVisible(); return; }
-
-  // Fallback: the active window's pane in this session (from daemon's cached state)
-  const activeFront = state.data?.fronts?.find(f => f.sessionName === activeSession);
-  if (activeFront?.activePaneId && activeAgents.length) {
-    const activeMatch = activeAgents.find(a => a.paneId === activeFront.activePaneId);
-    if (activeMatch) { state.selectedPane = activeMatch; ensureSelectedVisible(); return; }
-  }
-
-  // Fallback: first agent from active session
-  if (activeAgents.length) { state.selectedPane = activeAgents[0]; ensureSelectedVisible(); return; }
-
-  // Fallback: first waiting globally (not dismissed)
-  const firstWaiting = agents.find(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId));
-  if (firstWaiting) { state.selectedPane = firstWaiting; ensureSelectedVisible(); return; }
-
-  // Fallback: first agent
-  state.selectedPane = agents[0];
+  state.selectedPane = selected;
+  state.expandedPane = selected ? selected.paneId : null;
   ensureSelectedVisible();
 }
 
@@ -509,22 +524,16 @@ function navigateSelection(dir) {
     state.selectedPane = agents[next];
   }
 
+  state.expandedPane = state.selectedPane.paneId;
   ensureSelectedVisible();
   render();
 }
 
 function ensureSelectedVisible() {
   if (!state.selectedPane) return;
-  // Auto-expand the front containing the selected agent
-  for (const f of (state.data.fronts || [])) {
-    if (f.agents.some(a => a.paneId === state.selectedPane.paneId)) {
-      state.openFronts.add(f.sessionName);
-      break;
-    }
-  }
   // Scroll into view after render
   requestAnimationFrame(() => {
-    const row = document.querySelector(`.agent-row[data-pane="${state.selectedPane?.paneId}"]`);
+    const row = document.querySelector(`.row[data-pane="${state.selectedPane?.paneId}"]`);
     if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 }
@@ -540,8 +549,10 @@ function dismissSelected() {
   if (agents.length > 1) {
     const next = idx + 1 < agents.length ? idx + 1 : idx - 1;
     state.selectedPane = agents[next];
+    state.expandedPane = state.selectedPane.paneId;
   } else {
     state.selectedPane = null;
+    state.expandedPane = null;
   }
   render();
 }
@@ -556,16 +567,16 @@ async function renameSelectedAgent() {
   state.inlineEditAgent = paneId;
 
   // Visual feedback
-  const row = document.querySelector(`.agent-row[data-pane="${paneId}"]`);
-  const nameEl = row?.querySelector('.ar-name');
-  const prevText = nameEl?.textContent;
-  if (nameEl) nameEl.textContent = 'renomeando...';
+  const row = document.querySelector(`.row[data-pane="${paneId}"]`);
+  const taskEl = row?.querySelector('.r-task');
+  const prevText = taskEl?.textContent;
+  if (taskEl) taskEl.textContent = 'renomeando...';
 
   const result = await window.helm.renameAgent(paneId);
   state.inlineEditAgent = null;
   if (!result.ok) {
     console.error('[helm] rename failed:', result.error);
-    if (nameEl) nameEl.textContent = prevText || '';
+    if (taskEl) taskEl.textContent = prevText || '';
   }
   // On success, daemon broadcasts new state — render will pick it up
   render();
@@ -576,16 +587,16 @@ async function renameSelectedAgent() {
 function manualRenameAgent() {
   if (!state.selectedPane) return;
   const paneId = state.selectedPane.paneId;
-  const row = document.querySelector(`.agent-row[data-pane="${paneId}"]`);
-  const nameEl = row?.querySelector('.ar-name');
-  if (!nameEl) return;
+  const row = document.querySelector(`.row[data-pane="${paneId}"]`);
+  const taskEl = row?.querySelector('.r-task');
+  if (!taskEl) return;
 
   state.inlineEditAgent = paneId;
-  const currentName = nameEl.textContent;
+  const currentName = taskEl.textContent;
   let done = false;
 
-  nameEl.innerHTML = `<input class="ar-name-input" value="${escapeHtml(currentName)}" />`;
-  const input = nameEl.querySelector('.ar-name-input');
+  taskEl.innerHTML = `<input class="ar-name-input" value="${escapeHtml(currentName)}" />`;
+  const input = taskEl.querySelector('.ar-name-input');
   input.focus();
   input.select();
 
@@ -595,7 +606,7 @@ function manualRenameAgent() {
     state.inlineEditAgent = null;
     input.removeEventListener('keydown', onKey);
     input.removeEventListener('blur', onBlur);
-    nameEl.textContent = name || currentName;
+    taskEl.textContent = name || currentName;
     if (name && name !== currentName) {
       window.helm.manualRenameAgent(paneId, name).catch(err =>
         console.error('[helm] manual rename failed:', err)
@@ -730,8 +741,10 @@ async function executeDelete() {
   if (agents.length > 1) {
     const next = idx + 1 < agents.length ? idx + 1 : idx - 1;
     state.selectedPane = agents[next];
+    state.expandedPane = state.selectedPane.paneId;
   } else {
     state.selectedPane = null;
+    state.expandedPane = null;
   }
 
   render();
@@ -775,32 +788,26 @@ function render() {
   for (let i = 0; i < Math.max(1, runCount - waitCount); i++) dots.push('<div class="pdot run"></div>');
   $('pill-dots').innerHTML = dots.join('');
 
+  // Pill badges — mini glyphs of waiting agents
+  renderPillBadges();
+
   setText($('sum-fronts'), String(state.data.summary?.total || 0));
   setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
   setText($('sum-waiting'), String(effectiveWaiting));
 
   const hint = $('shortcut-hint');
-  hint.hidden = !state.shortcutMode && !state.focusMode;
-  if (state.focusMode) {
-    setText(hint, 'Enter ir · x dispensar · v nvim · Tab ver tudo · Esc fechar');
-  } else if (state.shortcutMode) {
+  hint.hidden = !state.shortcutMode;
+  if (state.shortcutMode) {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
-      setText(hint, 'j/k navegar · Enter ir · x dispensar · r/R renomear · f fork · v nvim · n window · d/D deletar · N sessão');
+      setText(hint, 'j/k navegar · Enter ir · Ctrl+N opção · x dispensar · r/R renomear · f fork · v nvim · n window · d/D deletar · N sessão');
     }
   }
 
-  // Always show normal panel content (fronts, footer, etc.)
-  reconcileFronts();
+  // Reconcile flat agent rows
+  reconcileRows();
   renderCreateArea();
-
-  // Show or hide summary panel based on focus mode
-  if (state.focusMode && state.focusAgent && state.open) {
-    renderSummaryPanel();
-  } else {
-    hideSummaryPanel();
-  }
 
   // Re-center collapsed pill when its width changes
   if (!state.open) {
@@ -838,390 +845,117 @@ function renderCreateArea() {
   setTimeout(() => input.focus(), 0);
 }
 
-// ── Fronts reconciler ─────────────────────────────────────────────────────
+// ── Pill badges renderer ──────────────────────────────────────────────────
 
-function reconcileFronts() {
-  const fronts = state.data.fronts || [];
+function renderPillBadges() {
+  const badges = [];
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      if (a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)) {
+        const colorIdx = projectColor(f.projectDir);
+        const glyph = glyphForAgent(a.paneId);
+        badges.push(`<div class="pill-badge g-${colorIdx}">${glyph}</div>`);
+      }
+    }
+  }
+  pillBadgesEl.innerHTML = badges.join('');
+}
 
-  // Index existing elements
-  const bySession = new Map();
-  for (const el of Array.from(frontsEl.children)) {
-    if (el.dataset.session) bySession.set(el.dataset.session, el);
+// ── Flat rows reconciler ─────────────────────────────────────────────────
+
+function reconcileRows() {
+  // Build flat agent list preserving front order
+  const allAgents = [];
+  for (const f of (state.data.fronts || [])) {
+    for (const a of f.agents) {
+      allAgents.push({ agent: a, front: f });
+    }
+  }
+
+  // Index existing row elements
+  const byPane = new Map();
+  for (const el of rowsEl.querySelectorAll('.row[data-pane]')) {
+    byPane.set(el.dataset.pane, el);
   }
 
   // Remove stale
-  for (const [name, el] of bySession) {
-    if (!fronts.find(f => f.sessionName === name)) { el.remove(); bySession.delete(name); }
+  for (const [id, el] of byPane) {
+    if (!allAgents.find(({ agent }) => agent.paneId === id)) {
+      el.remove();
+      byPane.delete(id);
+    }
   }
 
   // Update or create in order
-  fronts.forEach((front, idx) => {
-    let el = bySession.get(front.sessionName);
-    if (!el) {
-      el = createFrontEl(front);
-      bySession.set(front.sessionName, el);
-    } else {
-      patchFrontEl(el, front);
-    }
-    if (frontsEl.children[idx] !== el) frontsEl.insertBefore(el, frontsEl.children[idx] || null);
-  });
-}
-
-function createFrontEl(front) {
-  const el = document.createElement('div');
-  el.dataset.session = front.sessionName;
-  if (state.openFronts.has(front.sessionName)) el.classList.add('open');
-
-  const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
-  const run  = front.agents.filter(a => a.status === 'running').length;
-  const hasEditors = (front.editorPanes || []).length > 0;
-  const accentIdx = projectColor(front.projectDir);
-
-  const summaryParts = [];
-  if (front.agents.length > 0) summaryParts.push(`${effectiveWait} aguardando · ${run} rodando`);
-  if (hasEditors) summaryParts.push('nvim');
-  const summaryText = summaryParts.join(' · ');
-
-  el.className = frontClasses(effectiveWait, accentIdx) + (state.openFronts.has(front.sessionName) ? ' open' : '');
-
-  el.innerHTML = `
-    <div class="front-head">
-      <div class="fh-row">
-        <span class="drag-handle" draggable="false">⠿</span>
-        <span class="fname">${escapeHtml(front.name || front.sessionName)}</span>
-        ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
-        <button class="name-btn" data-action="edit">editar</button>
-      </div>
-      ${front.projectDir ? `<div class="project-name">${escapeHtml(front.projectDir)}</div>` : ''}
-      <div class="fagents-summary">
-        ${effectiveWait ? '<div class="fas-dot wait"></div>' : ''}
-        ${run  ? '<div class="fas-dot run"></div>' : ''}
-        <span class="fas-count ${effectiveWait ? 'alert' : ''}">${summaryText}</span>
-      </div>
-    </div>
-    <div class="fdiv"></div>
-    <div class="agents"></div>
-  `;
-
-  attachFrontEvents(el, front);
-  reconcileAgentRows(el.querySelector('.agents'), front);
-  return el;
-}
-
-function patchFrontEl(el, front) {
-  const effectiveWait = front.agents.filter(a => a.status === 'waiting' && !state.dismissedPanes.has(a.paneId)).length;
-  const run  = front.agents.filter(a => a.status === 'running').length;
-  const isOpen = state.openFronts.has(front.sessionName);
-  const accentIdx = projectColor(front.projectDir);
-
-  el.className = frontClasses(effectiveWait, accentIdx) + (isOpen ? ' open' : '');
-
-  // Update project name
-  let projEl = el.querySelector('.project-name');
-  if (front.projectDir) {
-    if (!projEl) {
-      projEl = document.createElement('div');
-      projEl.className = 'project-name';
-      const fhRow = el.querySelector('.fh-row');
-      if (fhRow) fhRow.parentNode.insertBefore(projEl, fhRow.nextSibling);
-    }
-    setText(projEl, front.projectDir);
-  } else if (projEl) {
-    projEl.remove();
-  }
-
-  // Summary
-  const hasEditors = (front.editorPanes || []).length > 0;
-  const summaryParts = [];
-  if (front.agents.length > 0) summaryParts.push(`${effectiveWait} aguardando · ${run} rodando`);
-  if (hasEditors) summaryParts.push('nvim');
-  const summaryText = summaryParts.join(' · ');
-
-  const fasCount = el.querySelector('.fas-count');
-  if (fasCount) {
-    setText(fasCount, summaryText);
-    cls(fasCount, 'alert', effectiveWait > 0);
-  }
-
-  // Update summary dots
-  const summary = el.querySelector('.fagents-summary');
-  if (summary) {
-    const dots = summary.querySelectorAll('.fas-dot');
-    // Simple approach: rebuild dots only if count changed
-    const hasWaitDot = Array.from(dots).some(d => d.classList.contains('wait'));
-    const hasRunDot  = Array.from(dots).some(d => d.classList.contains('run'));
-    if ((effectiveWait > 0) !== hasWaitDot || (run > 0) !== hasRunDot) {
-      // Remove old dots
-      dots.forEach(d => d.remove());
-      // Insert before fas-count
-      if (effectiveWait > 0) { const d = document.createElement('div'); d.className = 'fas-dot wait'; summary.insertBefore(d, fasCount); }
-      if (run > 0)  { const d = document.createElement('div'); d.className = 'fas-dot run';  summary.insertBefore(d, fasCount); }
-    }
-  }
-
-  // Name (skip during inline edit)
-  if (state.inlineEditSession !== front.sessionName) {
-    const hasInput = !!el.querySelector('.fname-input');
-    if (hasInput) {
-      rebuildNameRow(el, front);
-    } else {
-      setText(el.querySelector('.fname'), front.name || front.sessionName);
-      const hasConfirm = !!el.querySelector('[data-action="confirm"]');
-      if (front.aiSuggested !== hasConfirm) rebuildNameRow(el, front);
-    }
-  }
-
-  reconcileAgentRows(el.querySelector('.agents'), front);
-}
-
-function frontClasses(effectiveWaitCount, accentIdx) {
-  return `front ${effectiveWaitCount > 0 ? 'has-wait' : 'all-run'} accent-${accentIdx ?? 0}`;
-}
-
-// ── Front events (attached once) ──────────────────────────────────────────
-
-function attachFrontEvents(el, front) {
-  // Manual drag-to-reorder via handle (HTML5 D&D doesn't work on transparent Electron windows)
-  const handle = el.querySelector('.drag-handle');
-  if (handle) {
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      startDrag(el, e.clientX);
-    });
-  }
-
-  // Toggle open on header click
-  el.querySelector('.front-head').addEventListener('click', (e) => {
-    if (e.target.closest('.name-btn') || e.target.closest('.fname-input')) return;
-    el.classList.toggle('open');
-    const session = el.dataset.session;
-    el.classList.contains('open') ? state.openFronts.add(session) : state.openFronts.delete(session);
-    resizeToContent();
-  });
-
-  // Name button delegation (works for dynamically replaced buttons)
-  el.querySelector('.fh-row').addEventListener('click', (e) => {
-    const btn = e.target.closest('.name-btn');
-    if (!btn) return;
-    e.stopPropagation();
-    const action = btn.dataset.action;
-    const session = el.dataset.session;
-    const frontData = state.data.fronts.find(f => f.sessionName === session);
-    if (!frontData) return;
-
-    if (action === 'edit') {
-      state.inlineEditSession = session;
-      rebuildNameRow(el, frontData);
-    } else if (action === 'confirm') {
-      window.helm.confirmName(session, frontData.name || session);
-    } else if (action === 'save') {
-      const input = el.querySelector('.fname-input');
-      const name = input ? input.value.trim() || session : session;
-      if (frontData) { frontData.name = name; frontData.aiSuggested = false; }
-      window.helm.confirmName(session, name);
-      state.inlineEditSession = null;
-      render();
-    }
-  });
-}
-
-function rebuildNameRow(el, front) {
-  const fhRow = el.querySelector('.fh-row');
-  if (!fhRow) return;
-  const displayName = front.name || front.sessionName;
-
-  if (state.inlineEditSession === front.sessionName) {
-    fhRow.innerHTML = `
-      <span class="drag-handle" draggable="false">⠿</span>
-      <div class="fname-edit">
-        <input class="fname-input" value="${escapeHtml(displayName)}" data-session="${escapeHtml(front.sessionName)}" />
-        <button class="name-btn ok" data-action="save">✓ ok</button>
-      </div>
-    `;
-    const input = fhRow.querySelector('.fname-input');
-    if (input) {
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); state.inlineEditSession = null; render(); }
-        if (e.key === 'Enter')  { e.stopPropagation(); fhRow.querySelector('[data-action="save"]')?.click(); }
-      });
-      setTimeout(() => input.focus(), 0);
-    }
-  } else {
-    fhRow.innerHTML = `
-      <span class="drag-handle" draggable="false">⠿</span>
-      <span class="fname">${escapeHtml(displayName)}</span>
-      ${front.aiSuggested ? '<button class="name-btn ok" data-action="confirm">✓ ok</button>' : ''}
-      <button class="name-btn" data-action="edit">editar</button>
-    `;
-  }
-}
-
-// ── Manual drag-to-reorder ─────────────────────────────────────────────────
-
-let _dragging = null;
-
-function startDrag(el, startX) {
-  setIgnoreIfChanged(false);  // ensure mouse events work during drag
-  el.classList.add('dragging');
-  _dragging = { el, startX, startLeft: el.offsetLeft };
-
-  const siblings = Array.from(frontsEl.children).filter(c => c !== el && c.dataset.session);
-  // Store midpoints of siblings for hit testing
-  const targets = siblings.map(s => ({
-    el: s,
-    mid: s.offsetLeft + s.offsetWidth / 2,
-    session: s.dataset.session
-  }));
-
-  function onMove(e) {
-    const dx = e.clientX - startX;
-    el.style.transform = `translateX(${dx}px)`;
-    el.style.zIndex = '100';
-
-    // Highlight drop target
-    const elMid = _dragging.startLeft + el.offsetWidth / 2 + dx;
-    siblings.forEach(s => s.classList.remove('drag-over'));
-    // Find which sibling we're overlapping
-    let closest = null, closestDist = Infinity;
-    for (const t of targets) {
-      const dist = Math.abs(elMid - t.mid);
-      if (dist < closestDist && dist < el.offsetWidth * 0.6) {
-        closestDist = dist;
-        closest = t;
-      }
-    }
-    if (closest) closest.el.classList.add('drag-over');
-  }
-
-  function onUp(e) {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-
-    el.style.transform = '';
-    el.style.zIndex = '';
-    el.classList.remove('dragging');
-    siblings.forEach(s => s.classList.remove('drag-over'));
-
-    // Find drop target
-    const dx = e.clientX - startX;
-    const elMid = _dragging.startLeft + el.offsetWidth / 2 + dx;
-    let closest = null, closestDist = Infinity;
-    for (const t of targets) {
-      const dist = Math.abs(elMid - t.mid);
-      if (dist < closestDist && dist < el.offsetWidth * 0.6) {
-        closestDist = dist;
-        closest = t;
-      }
-    }
-
-    if (closest) {
-      const fronts = state.data.fronts;
-      const from = fronts.findIndex(f => f.sessionName === el.dataset.session);
-      const to   = fronts.findIndex(f => f.sessionName === closest.session);
-      if (from !== -1 && to !== -1 && from !== to) {
-        const [moved] = fronts.splice(from, 1);
-        fronts.splice(to, 0, moved);
-        state.frontOrder = fronts.map(f => f.sessionName);
-        window.helm.saveFrontOrder(state.frontOrder);
-        reconcileFronts();
-      }
-    }
-
-    _dragging = null;
-    setTimeout(() => setIgnoreIfChanged(true), 50);
-  }
-
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
-}
-
-// ── Agent rows reconciler ─────────────────────────────────────────────────
-
-function reconcileAgentRows(agentsEl, front) {
-  if (!agentsEl) return;
-
-  const byPane = new Map();
-  for (const row of agentsEl.querySelectorAll('.agent-row[data-pane]')) byPane.set(row.dataset.pane, row);
-
-  // Remove stale
-  for (const [id, row] of byPane) {
-    if (!front.agents.find(a => a.paneId === id)) { row.remove(); byPane.delete(id); }
-  }
-
-  front.agents.forEach((agent, idx) => {
+  allAgents.forEach(({ agent, front }, idx) => {
     let row = byPane.get(agent.paneId);
     if (!row) {
-      row = createAgentRow(agent, front);
+      row = createAgentRowV5(agent, front);
       byPane.set(agent.paneId, row);
     } else {
-      patchAgentRow(row, agent, front);
+      patchAgentRowV5(row, agent, front);
     }
-    if (agentsEl.children[idx] !== row) agentsEl.insertBefore(row, agentsEl.children[idx] || null);
+    if (rowsEl.children[idx] !== row) {
+      rowsEl.insertBefore(row, rowsEl.children[idx] || null);
+    }
   });
-
-  // Add window button at the end
-  let addBtn = agentsEl.querySelector('.add-window-btn');
-  if (!addBtn) {
-    addBtn = document.createElement('button');
-    addBtn.className = 'add-window-btn';
-    addBtn.textContent = '+ nova window';
-    addBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      togglePanel(false);
-      window.helm.blurWindow();
-      const result = await window.helm.createWindow(front.sessionName, front.weztermTabId);
-      if (!result.ok) console.error('[helm] create-window failed:', result.error);
-    });
-    agentsEl.appendChild(addBtn);
-  }
-  // Keep it last
-  if (addBtn !== agentsEl.lastElementChild) agentsEl.appendChild(addBtn);
 }
 
-function getAgentGlobalIndex(paneId) {
-  const agents = getNavigableAgents();
-  const idx = agents.findIndex(a => a.paneId === paneId);
-  return idx >= 0 && idx < 9 ? idx + 1 : null;
-}
-
-function createAgentRow(agent, front) {
+function createAgentRowV5(agent, front) {
   const row = document.createElement('div');
   const isWait = agent.status === 'waiting';
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
   const isSelected = state.selectedPane?.paneId === agent.paneId;
+  const isExpanded = state.expandedPane === agent.paneId;
   const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
-  const isSummarySource = state.focusMode && state.focusAgent?.agent.paneId === agent.paneId;
-  row.className = `agent-row${isWait ? ' is-wait' : ''}${isDismissed ? ' is-dismissed' : ''}${isSelected ? ' selected' : ''}${isConfirming ? ' confirming-delete' : ''}${isSummarySource ? ' summary-source' : ''}`;
+  const colorIdx = projectColor(front.projectDir);
+  const glyph = glyphForAgent(agent.paneId);
+
+  row.className = 'row'
+    + ` accent-${colorIdx} tint-${colorIdx}`
+    + (isWait ? ' is-wait' : '')
+    + (isDismissed ? ' is-dismissed' : '')
+    + (isSelected ? ' selected' : '')
+    + (isExpanded ? ' expanded' : '')
+    + (isConfirming ? ' confirming-delete' : '');
   row.dataset.pane = agent.paneId;
-  const tag = agentTag(agent.command);
-  const num = getAgentGlobalIndex(agent.paneId);
+
+  const projectDir = front.projectDir || front.sessionName;
+  const projectName = projectDir.split('/').pop() || projectDir;
+  const sdotClass = isWait ? 'wait' : 'run';
+  const statusChar = isWait ? '❯' : '✱';
+  const statusClass = isWait ? 'wait' : 'run';
+  const lastOutput = isWait
+    ? (agent.waitingSummary || agent.lastOutput || 'aguardando resposta')
+    : (agent.lastOutput || 'trabalhando...');
   const confirmType = state.confirmingDelete?.type === 'session' ? 'sessão' : 'window';
+
   row.innerHTML = `
-    ${num ? `<span class="ar-num">${num}</span>` : ''}
-    <div class="ar-dot ${isWait ? 'wait' : 'run'}"></div>
-    <div class="ar-body">
-      <div class="ar-top">
-        <span class="ar-agent ${tag}">${escapeHtml(tag)}</span>
-        <span class="ar-time">${formatElapsed(agent.interactionStartedAt)}</span>
+    <div class="glyph g-${colorIdx}">${glyph}<span class="sdot ${sdotClass}"></span></div>
+    <div class="r-body">
+      <div class="r-main">
+        <span class="r-project c-${colorIdx}">${escapeHtml(projectName)}</span>
+        <span class="r-sep">\u203A</span>
+        <span class="r-task">${escapeHtml(agent.task || agent.windowName)}</span>
+        <span class="r-time">${formatElapsed(agent.interactionStartedAt)}</span>
       </div>
-      <div class="ar-name">${escapeHtml(agent.task || agent.windowName)}</div>
+      <div class="r-output"><span class="ch ${statusClass}">${statusChar}</span> ${escapeHtml(lastOutput)}</div>
+      <div class="response-card"></div>
     </div>
-    <div class="ar-dismiss" data-pane="${agent.paneId}" title="marcar como visto">✓</div>
-    <div class="ar-delete" data-pane="${agent.paneId}" title="deletar">✕</div>
+    <div class="ar-delete" data-pane="${agent.paneId}" title="deletar">\u2715</div>
     <div class="ar-confirm-delete">deletar ${confirmType}? <button class="confirm-yes">sim</button> <button class="confirm-no">não</button></div>
-    <div class="ar-nav">ir →</div>
   `;
-  row.querySelector('.ar-dismiss').addEventListener('click', (e) => {
-    e.stopPropagation();
-    state.dismissedPanes.add(agent.paneId);
-    render();
-  });
+
+  // Populate response card if expanded
+  if (isExpanded) {
+    renderResponseCard(row.querySelector('.response-card'), agent, front);
+  }
+
+  // Event listeners — use findAgentByPane to avoid stale closures
   row.querySelector('.ar-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    // Select this agent first, then initiate delete window
-    state.selectedPane = { ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId };
-    initiateDeleteWindow();
+    const a = findAgentByPane(row.dataset.pane);
+    if (a) { state.selectedPane = a; initiateDeleteWindow(); }
   });
   row.querySelector('.confirm-yes').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1234,156 +968,319 @@ function createAgentRow(agent, front) {
   row.addEventListener('click', (e) => {
     e.stopPropagation();
     if (state.confirmingDelete) return;
-    navigateTo({ ...agent, sessionName: front.sessionName, weztermTabId: front.weztermTabId });
+    if (e.target.closest('.ar-delete, .ar-confirm-delete')) return;
+    const a = findAgentByPane(row.dataset.pane);
+    if (a) navigateTo(a);
   });
+
   return row;
 }
 
-function patchAgentRow(row, agent, front) {
+function patchAgentRowV5(row, agent, front) {
   const isWait = agent.status === 'waiting';
   const isDismissed = isWait && state.dismissedPanes.has(agent.paneId);
   const isSelected = state.selectedPane?.paneId === agent.paneId;
+  const isExpanded = state.expandedPane === agent.paneId;
   const isConfirming = state.confirmingDelete?.paneId === agent.paneId;
-  const isSummarySource = state.focusMode && state.focusAgent?.agent.paneId === agent.paneId;
+  const colorIdx = projectColor(front.projectDir);
+
+  // Update accent/tint classes
+  for (let i = 0; i < 6; i++) {
+    cls(row, `accent-${i}`, i === colorIdx);
+    cls(row, `tint-${i}`, i === colorIdx);
+  }
   cls(row, 'is-wait', isWait);
   cls(row, 'is-dismissed', isDismissed);
   cls(row, 'selected', isSelected);
+  cls(row, 'expanded', isExpanded);
   cls(row, 'confirming-delete', isConfirming);
-  cls(row, 'summary-source', isSummarySource);
 
-  const dot = row.querySelector('.ar-dot');
-  if (dot) dot.className = `ar-dot ${isWait ? 'wait' : 'run'}`;
+  // Update glyph color
+  const glyphEl = row.querySelector('.glyph');
+  if (glyphEl) {
+    for (let i = 0; i < 6; i++) cls(glyphEl, `g-${i}`, i === colorIdx);
+  }
 
-  const nameEl = row.querySelector('.ar-name');
-  if (nameEl) setText(nameEl, agent.task || agent.windowName);
+  // Update status dot
+  const sdot = row.querySelector('.sdot');
+  if (sdot) sdot.className = `sdot ${isWait ? 'wait' : 'run'}`;
 
-  const time = row.querySelector('.ar-time');
-  if (time) setText(time, formatElapsed(agent.interactionStartedAt));
+  // Update project name
+  const projEl = row.querySelector('.r-project');
+  if (projEl) {
+    const projectDir = front.projectDir || front.sessionName;
+    const projectName = projectDir.split('/').pop() || projectDir;
+    setText(projEl, projectName);
+    for (let i = 0; i < 6; i++) cls(projEl, `c-${i}`, i === colorIdx);
+  }
 
-  // Update number badge
-  const num = getAgentGlobalIndex(agent.paneId);
-  const numEl = row.querySelector('.ar-num');
-  if (num) {
-    if (numEl) { setText(numEl, String(num)); }
-    else {
-      const badge = document.createElement('span');
-      badge.className = 'ar-num';
-      badge.textContent = num;
-      row.insertBefore(badge, row.firstChild);
+  // Update task name (skip during inline edit)
+  if (state.inlineEditAgent !== agent.paneId) {
+    const taskEl = row.querySelector('.r-task');
+    if (taskEl && !taskEl.querySelector('.ar-name-input')) {
+      setText(taskEl, agent.task || agent.windowName);
     }
-  } else if (numEl) {
-    numEl.remove();
+  }
+
+  // Update time
+  const timeEl = row.querySelector('.r-time');
+  if (timeEl) setText(timeEl, formatElapsed(agent.interactionStartedAt));
+
+  // Update lastOutput
+  const outputEl = row.querySelector('.r-output');
+  if (outputEl) {
+    const statusChar = isWait ? '❯' : '✱';
+    const statusClass = isWait ? 'wait' : 'run';
+    const lastOutput = isWait
+      ? (agent.waitingSummary || agent.lastOutput || 'aguardando resposta')
+      : (agent.lastOutput || 'trabalhando...');
+    const newHtml = `<span class="ch ${statusClass}">${statusChar}</span> ${escapeHtml(lastOutput)}`;
+    if (outputEl.innerHTML !== newHtml) outputEl.innerHTML = newHtml;
+  }
+
+  // Update response card
+  const cardEl = row.querySelector('.response-card');
+  if (cardEl) {
+    if (isExpanded) {
+      // Re-render if card is empty (first expand) or responseCard data changed
+      const prevType = cardEl.dataset.rcType || '';
+      const prevHero = cardEl.dataset.rcHero || '';
+      const curType = agent.responseCard?.type || '';
+      const curHero = agent.responseCard?.hero || '';
+      if (!cardEl.hasChildNodes() || prevType !== curType || prevHero !== curHero) {
+        renderResponseCard(cardEl, agent, front);
+        cardEl.dataset.rcType = curType;
+        cardEl.dataset.rcHero = curHero;
+      }
+    } else {
+      // Clear card when collapsed
+      if (cardEl.hasChildNodes()) {
+        cardEl.innerHTML = '';
+        delete cardEl.dataset.rcType;
+        delete cardEl.dataset.rcHero;
+      }
+    }
   }
 }
 
-// ── Summary panel renderer ──────────────────────────────────────────────────
+// ── Response card renderer ────────────────────────────────────────────────
 
-function renderSummaryPanel() {
-  const { agent, front } = state.focusAgent;
-  const accentIdx = projectColor(front.projectDir);
-  const summary = agent.waitingSummary || '';
-  const lastLine = agent.lastOutput || '';
+function renderResponseCard(cardEl, agent, front) {
+  const isWait = agent.status === 'waiting';
+  const rc = agent.responseCard; // structured data from daemon (or null)
+  const summary = agent.waitingSummary || agent.lastOutput || '';
 
-  // Remove old accent classes and apply new
-  for (let i = 0; i < 6; i++) summaryPanelEl.classList.remove(`accent-${i}`);
-  summaryPanelEl.classList.add(`accent-${accentIdx}`);
+  let heroHtml = '';
+  let optionsHtml = '';
+  let contextHtml = '';
+  let kpisHtml = '';
 
-  const text = summary || lastLine || '';
+  if (rc) {
+    // ── Structured response card from daemon ──
+    if (rc.type === 'question' && rc.options?.length) {
+      heroHtml = `
+        <div class="rc-hero question">
+          <div class="rc-hero-label">pergunta</div>
+          <div class="rc-hero-text">${escapeHtml(rc.hero || 'Escolha uma opção')}</div>
+        </div>
+      `;
+      const isLast = (i) => i === rc.options.length - 1;
+      optionsHtml = `<div class="rc-options">
+        ${rc.options.map((opt, i) => `
+          <div class="rc-option" data-option-idx="${i}" data-option-text="${escapeHtml(opt.label)}">
+            <span class="opt-num">${i + 1}</span>
+            <span class="opt-label">${escapeHtml(opt.label)}</span>
+            ${opt.tags?.length ? `<span class="opt-tags">${opt.tags.map(t => `<span class="rc-kw">${escapeHtml(t)}</span>`).join('')}</span>` : ''}
+          </div>
+        `).join('')}
+      </div>`;
+    } else if (rc.type === 'permission') {
+      heroHtml = `
+        <div class="rc-hero permission">
+          <div class="rc-hero-label">permissão</div>
+          <div class="rc-hero-text">${escapeHtml(rc.hero || 'Permissão necessária')}</div>
+          ${rc.command ? `<div class="rc-command"><code>${escapeHtml(rc.command)}</code></div>` : ''}
+        </div>
+      `;
+      optionsHtml = `<div class="rc-options">
+        <div class="rc-option rc-approve" data-option-idx="0" data-option-text="y">
+          <span class="opt-num">1</span>
+          <span class="opt-label">Aprovar</span>
+        </div>
+        <div class="rc-option rc-deny" data-option-idx="1" data-option-text="n">
+          <span class="opt-num">2</span>
+          <span class="opt-label">Negar</span>
+        </div>
+      </div>`;
+    } else {
+      // type === 'response' or unknown
+      heroHtml = `
+        <div class="rc-hero response">
+          <div class="rc-hero-label">resposta</div>
+          <div class="rc-hero-text">${escapeHtml(rc.hero || summary || 'Trabalhando...')}</div>
+        </div>
+      `;
+    }
 
-  summaryPanelEl.innerHTML = text
-    ? `<div class="sp-summary">${escapeHtml(text)}</div>`
-    : `<div class="sp-summary sp-empty">aguardando resposta</div>`;
+    // Keywords from structured data
+    if (rc.keywords?.length) {
+      contextHtml = `<div class="rc-context"><div class="rc-keywords">
+        ${rc.keywords.map(kw => `<span class="rc-kw">${escapeHtml(kw)}</span>`).join('')}
+      </div></div>`;
+    }
 
-  // Position: immediately if panel is already visible (re-render), otherwise
-  // togglePanel handles positioning after the panel open transition completes
-  if (panel.classList.contains('visible')) {
-    requestAnimationFrame(() => positionSummaryConnector());
+    // KPIs from structured data
+    if (rc.kpis?.length) {
+      kpisHtml = `<div class="rc-kpis">
+        ${rc.kpis.map(k => `<span class="rc-kpi ${k.color || ''}"><span class="kpi-num">${escapeHtml(k.num)}</span><span class="kpi-label">${escapeHtml(k.label)}</span></span>`).join('')}
+      </div>`;
+    }
+  } else {
+    // ── Fallback: no structured data — use summary/lastOutput ──
+    const keywords = extractKeywords(summary);
+
+    if (isWait) {
+      heroHtml = `
+        <div class="rc-hero question">
+          <div class="rc-hero-label">aguardando resposta</div>
+          <div class="rc-hero-text">${escapeHtml(summary || 'Aguardando sua interação')}</div>
+        </div>
+      `;
+    } else {
+      heroHtml = `
+        <div class="rc-hero response">
+          <div class="rc-hero-label">${agent.lastOutput ? 'último output' : 'em progresso'}</div>
+          <div class="rc-hero-text">${escapeHtml(summary || 'Trabalhando...')}</div>
+        </div>
+      `;
+    }
+
+    if (keywords.length > 0) {
+      contextHtml = `<div class="rc-context"><div class="rc-keywords">
+        ${keywords.map(kw => `<span class="rc-kw">${escapeHtml(kw)}</span>`).join('')}
+      </div></div>`;
+    }
   }
-}
 
-function positionSummaryConnector() {
-  if (!state.focusAgent) { hideSummaryPanel(); return; }
-
-  const agentRow = document.querySelector(`.agent-row[data-pane="${state.focusAgent.agent.paneId}"]`);
-  if (!agentRow) { hideSummaryPanel(); return; }
-
-  const hudEl = document.querySelector('.hud');
-  const hudRect = hudEl.getBoundingClientRect();
-  const panelRect = panel.getBoundingClientRect();
-  const agentRect = agentRow.getBoundingClientRect();
-
-  // All coords relative to .hud
-  const agentCenterX = agentRect.left + agentRect.width / 2 - hudRect.left;
-  const agentBottomY = agentRect.bottom - hudRect.top;
-
-  // Position summary below panel, then center horizontally after measuring
-  const summaryTop = panelRect.bottom - hudRect.top + 16;
-  summaryPanelEl.style.top = summaryTop + 'px';
-  summaryPanelEl.style.left = '0px'; // temporary — render to measure
-
-  // Measure actual rendered width and center in hud
-  const spW = summaryPanelEl.getBoundingClientRect().width;
-  let summaryLeft = Math.round((hudRect.width - spW) / 2);
-  summaryLeft = Math.max(10, Math.min(summaryLeft, hudRect.width - spW - 10));
-  summaryPanelEl.style.left = summaryLeft + 'px';
-
-  // SVG covers the full hud
-  const svgW = hudRect.width;
-  const svgH = hudRect.height;
-  connectorSvg.setAttribute('width', svgW);
-  connectorSvg.setAttribute('height', svgH);
-  connectorSvg.style.width = svgW + 'px';
-  connectorSvg.style.height = svgH + 'px';
-
-  // Start: bottom-center of agent row
-  const sx = agentCenterX;
-  const sy = agentBottomY;
-
-  // End: top-center of summary panel
-  const ex = summaryLeft + spW / 2;
-  const ey = summaryTop;
-
-  // S-curve control points
-  const verticalGap = ey - sy;
-  const c1x = sx;
-  const c1y = sy + verticalGap * 0.45;
-  const c2x = ex;
-  const c2y = ey - verticalGap * 0.45;
-
-  connectorSvg.innerHTML = `
-    <defs>
-      <linearGradient id="sp-line-grad" x1="0" y1="${sy}" x2="0" y2="${ey}" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="rgba(255,165,2,0.6)" />
-        <stop offset="100%" stop-color="rgba(255,165,2,0.3)" />
-      </linearGradient>
-      <filter id="sp-glow">
-        <feGaussianBlur stdDeviation="2.5" result="blur" />
-        <feMerge>
-          <feMergeNode in="blur" />
-          <feMergeNode in="SourceGraphic" />
-        </feMerge>
-      </filter>
-    </defs>
-    <path d="M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}"
-          fill="none" stroke="rgba(255,165,2,0.08)" stroke-width="10" />
-    <path d="M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}"
-          fill="none" stroke="url(#sp-line-grad)" stroke-width="2" filter="url(#sp-glow)" />
-    <circle cx="${sx}" cy="${sy}" r="4" fill="#ffa502" opacity="0.85">
-      <animate attributeName="r" values="4;5;4" dur="2s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.5;0.85" dur="2s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="${ex}" cy="${ey}" r="4" fill="#ffa502" opacity="0.85">
-      <animate attributeName="r" values="4;5;4" dur="2s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.85;0.5;0.85" dur="2s" repeatCount="indefinite" />
-    </circle>
+  const actionsHtml = `
+    <div class="rc-actions">
+      <button class="rc-btn" data-action="terminal">Ver no terminal</button>
+      <button class="rc-btn primary" data-action="write">Nova instrução</button>
+    </div>
+    <div class="rc-write">
+      <textarea class="rc-write-input" placeholder="Escreva sua instrução..." rows="1"></textarea>
+      <div class="rc-write-submit">
+        <button class="rc-btn primary" data-action="send">Enviar</button>
+      </div>
+    </div>
   `;
 
-  summaryPanelEl.classList.add('visible');
+  cardEl.innerHTML = heroHtml + optionsHtml + contextHtml + kpisHtml + actionsHtml;
+
+  // ── Event listeners ──
+
+  // Option clicks — send the option text (or index+1 as string)
+  for (const opt of cardEl.querySelectorAll('.rc-option')) {
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const text = opt.dataset.optionText;
+      if (text) sendResponseToAgent(cardEl.closest('.row').dataset.pane, text);
+    });
+  }
+
+  // "Ver no terminal" — navigate directly
+  cardEl.querySelector('[data-action="terminal"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const a = findAgentByPane(cardEl.closest('.row').dataset.pane);
+    if (a) { navigateTo(a); togglePanel(false); if (state.shortcutMode) window.helm.blurWindow(); }
+  });
+
+  // "Nova instrução" — toggle write field
+  cardEl.querySelector('[data-action="write"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const writeBox = cardEl.querySelector('.rc-write');
+    writeBox.classList.toggle('visible');
+    if (writeBox.classList.contains('visible')) {
+      writeBox.querySelector('.rc-write-input').focus();
+    }
+  });
+
+  // "Enviar" button
+  cardEl.querySelector('[data-action="send"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const input = cardEl.querySelector('.rc-write-input');
+    const text = input?.value.trim();
+    if (!text) return;
+    sendResponseToAgent(cardEl.closest('.row').dataset.pane, text);
+  });
+
+  // Prevent response card clicks from navigating the row
+  cardEl.addEventListener('click', (e) => e.stopPropagation());
+
+  // Textarea: Enter sends, Escape closes write, prevent keyboard shortcut leaking
+  const textarea = cardEl.querySelector('.rc-write-input');
+  if (textarea) {
+    textarea.addEventListener('click', (e) => e.stopPropagation());
+    textarea.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const text = textarea.value.trim();
+        if (text) sendResponseToAgent(cardEl.closest('.row').dataset.pane, text);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        const writeBox = cardEl.querySelector('.rc-write');
+        writeBox.classList.remove('visible');
+        textarea.blur();
+      }
+    });
+  }
 }
 
-function hideSummaryPanel() {
-  summaryPanelEl.classList.remove('visible');
-  connectorSvg.innerHTML = '';
+function extractKeywords(text) {
+  if (!text) return [];
+  // Split by bullets, newlines, colons, semicolons
+  const parts = text.split(/[•\n:;]+/).map(s => s.trim()).filter(s => s.length > 2 && s.length < 50);
+  return parts.slice(0, 8);
+}
+
+async function sendResponseToAgent(paneId, text) {
+  // Send text to the agent via tmux send-keys
+  try {
+    await window.helm.sendKeys(paneId, text);
+  } catch (err) {
+    console.error('[helm] send-keys failed:', err);
+    return;
+  }
+
+  // Show sent animation
+  const row = document.querySelector(`.row[data-pane="${paneId}"]`);
+  const card = row?.querySelector('.response-card');
+  if (card) {
+    card.innerHTML = '<div class="sent-indicator" style="padding: 12px 14px;">\u2713 Enviado</div>';
+  }
+
+  // After animation, move to next waiting or close panel
+  setTimeout(() => {
+    state.expandedPane = null;
+
+    // Auto-navigate to next waiting agent
+    const next = getOldestUndismissedWaiting();
+    if (next) {
+      state.expandedPane = next.agent.paneId;
+      state.selectedPane = { ...next.agent, sessionName: next.front.sessionName, weztermTabId: next.front.weztermTabId };
+    } else {
+      togglePanel(false);
+      if (state.shortcutMode) window.helm.blurWindow();
+    }
+    render();
+  }, 800);
+}
+
+function getAgentGlobalIndex(paneId) {
+  const agents = getNavigableAgents();
+  const idx = agents.findIndex(a => a.paneId === paneId);
+  return idx >= 0 && idx < 9 ? idx + 1 : null;
 }
 
 // ── Discrete blink for waiting dots (no CSS animation = no 60fps GPU compositing) ──
