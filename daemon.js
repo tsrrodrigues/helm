@@ -808,25 +808,35 @@ const CERT_DIR = path.join(HOME, '.helm', 'certs');
 const CERT_DOMAIN = 'macbook-pro-de-tiago.tail8a488e.ts.net';
 const https = require('https');
 
-// ── WebSocket server ──────────────────────────────────────────────────────
+// ── WebSocket servers ─────────────────────────────────────────────────────
+// WS on :7373 for Electron (local) + WSS on :7375 for mobile (TLS)
 
-let wss;
+const wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
+console.log(`[helm] WS on :${PORT} (Electron/local)`);
+
+let wssSecure = null;
 try {
   const wsCert = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
   const wsKey = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
   const wssServer = https.createServer({ cert: wsCert, key: wsKey });
-  wss = new WebSocket.Server({ server: wssServer });
-  wssServer.listen(PORT, '0.0.0.0');
-  console.log(`[helm] WSS enabled on :${PORT}`);
-} catch {
-  wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
-  console.log(`[helm] WS (no TLS) on :${PORT}`);
+  wssSecure = new WebSocket.Server({ server: wssServer });
+  wssServer.listen(7375, '0.0.0.0');
+  wssSecure.on('connection', (ws) => ws.send(cachedStateJson));
+  console.log(`[helm] WSS on :7375 (mobile/TLS)`);
+} catch (e) {
+  console.log(`[helm] WSS not available: ${e.message}`);
 }
+
 wss.on('connection', (ws) => ws.send(cachedStateJson));
 
 function broadcast(json) {
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) client.send(json);
+  }
+  if (wssSecure) {
+    for (const client of wssSecure.clients) {
+      if (client.readyState === WebSocket.OPEN) client.send(json);
+    }
   }
 }
 
