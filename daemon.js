@@ -805,7 +805,18 @@ async function buildState() {
 
 // ── WebSocket server ──────────────────────────────────────────────────────
 
-const wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
+let wss;
+try {
+  const wsCert = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
+  const wsKey = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
+  const wssServer = https.createServer({ cert: wsCert, key: wsKey });
+  wss = new WebSocket.Server({ server: wssServer });
+  wssServer.listen(PORT, '0.0.0.0');
+  console.log(`[helm] WSS enabled on :${PORT}`);
+} catch {
+  wss = new WebSocket.Server({ host: '0.0.0.0', port: PORT });
+  console.log(`[helm] WS (no TLS) on :${PORT}`);
+}
 wss.on('connection', (ws) => ws.send(cachedStateJson));
 
 function broadcast(json) {
@@ -828,10 +839,25 @@ async function tick() {
   }
 }
 
-// Debug + API HTTP server
+// Debug + API HTTP server (HTTPS when certs available, HTTP fallback)
 const http = require('http');
+const https = require('https');
 const MOBILE_HTML = path.join(__dirname, 'mobile.html');
-http.createServer(async (req, res) => {
+const CERT_DIR = path.join(HOME, '.helm', 'certs');
+const CERT_DOMAIN = 'macbook-pro-de-tiago.tail8a488e.ts.net';
+
+let httpServer;
+try {
+  const cert = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.crt'));
+  const key = fs.readFileSync(path.join(CERT_DIR, CERT_DOMAIN + '.key'));
+  httpServer = https.createServer({ cert, key }, handleRequest);
+  console.log('[helm] HTTPS enabled with Tailscale cert');
+} catch (e) {
+  httpServer = http.createServer(handleRequest);
+  console.log('[helm] HTTPS certs not found, falling back to HTTP');
+}
+
+async function handleRequest(req, res) {
   // ── CORS for mobile client ──
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -1085,8 +1111,9 @@ Reply with ONLY a 2-4 word lowercase task name describing the major front of wor
   }
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(lines.join('\n') + '\n');
-}).listen(7374, '0.0.0.0');
-console.log('HTTP + API: http://0.0.0.0:7374 (mobile: /, debug: /debug)');
+}
+httpServer.listen(7374, '0.0.0.0');
+console.log('API server on :7374 (mobile: /, debug: /debug)');
 
 ensureFiles();
 loadPaneTasks();

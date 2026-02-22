@@ -446,8 +446,9 @@ html, body {
 <script>
 // ── Config ──────────────────────────────────────────
 const _host = location.hostname || 'localhost';
-const WS_URL = `ws://${_host}:7373`;
-const API_URL = `http://${_host}:7374`;
+const _secure = location.protocol === 'https:';
+const WS_URL = `${_secure ? 'wss' : 'ws'}://${_host}:7373`;
+const API_URL = `${location.protocol}//${_host}:7374`;
 
 // ── State ───────────────────────────────────────────
 const state = {
