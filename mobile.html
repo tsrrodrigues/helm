@@ -920,54 +920,19 @@ function formatTermOutput(raw) {
     const trimmed = line.trim();
     const escaped = esc(line);
     
-    // Empty lines (should be filtered already, but just in case)
     if (!trimmed) return '';
     
-    // Claude Code section headers (⏺ Reading..., ⏺ Writing...)
-    if (/^⏺/.test(trimmed))
-      return '<span class="t-section">' + escaped + '</span>';
-    
-    // Success markers (✓ Read file, ✓ Wrote file)
-    if (/^✓/.test(trimmed))
-      return '<span class="t-success">' + escaped + '</span>';
-    
-    // Error/failure markers
+    // Only highlight diffs and errors — everything else stays uniform
     if (/^✗|^ERROR|^Error:|FAIL/i.test(trimmed))
       return '<span class="t-error">' + escaped + '</span>';
-    
-    // Diff: added lines
     if (/^\+\s/.test(trimmed) || /^\+[^+]/.test(trimmed))
       return '<span class="t-diff-add">' + escaped + '</span>';
-    
-    // Diff: removed lines
     if (/^-\s/.test(trimmed) || /^-[^-]/.test(trimmed))
       return '<span class="t-diff-del">' + escaped + '</span>';
-    
-    // Diff: file headers
     if (/^---\s|^\+\+\+\s|^diff\s/.test(trimmed))
       return '<span class="t-diff-header">' + escaped + '</span>';
     
-    // Prompt lines (>, ❯, $)
-    if (/^[>❯$]\s*$/.test(trimmed))
-      return '<span class="t-prompt">' + escaped + '</span>';
-    
-    // Spinners / activity
-    if (/[✻⠋⠙⠸⠴⠦⠇◆]/.test(trimmed))
-      return '<span class="t-activity">' + escaped + '</span>';
-    
-    // Test results
-    if (/^\s*[✓✔]\s/.test(trimmed))
-      return '<span class="t-test-pass">' + escaped + '</span>';
-    
-    // File paths and commands (lines with ── separators)  
-    if (/^[─━═]+/.test(trimmed) || /^⏵/.test(trimmed))
-      return '<span class="t-dim">' + escaped + '</span>';
-    
-    // Permission/question prompts
-    if (/\(y\/n\)|accept edits|shift\+tab|How should|Do you want/i.test(trimmed))
-      return '<span class="t-question">' + escaped + '</span>';
-    
-    // Default
+    // Default — same color for everything
     return escaped;
   });
     
