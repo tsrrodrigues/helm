@@ -449,6 +449,7 @@ const _secure = location.protocol === 'https:';
 const WS_URL = _secure ? `wss://${_host}:7375` : `ws://${_host}:7373`;
 const API_URL = `${location.protocol}//${_host}:7374`;
 console.log('[helm-mobile] proto:', location.protocol, 'host:', _host, 'WS:', WS_URL, 'API:', API_URL);
+document.title = 'Helm · ' + WS_URL;
 
 // ── State ───────────────────────────────────────────
 const state = {
@@ -818,7 +819,7 @@ function connect() {
     };
     ws.onerror = (e) => {
       console.log('[helm-mobile] WS error:', e);
-      connEl.textContent = 'erro ws';
+      connEl.textContent = WS_URL.slice(0,30);
       ws.close();
     };
   } catch {
