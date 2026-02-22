@@ -6,6 +6,41 @@ const WebSocket = require('ws');
 
 const PORT = 7373;
 const POLL_MS = 5000;
+
+// ── Push notifications ────────────────────────────────────────────────────
+let webpush = null;
+try {
+  webpush = require('web-push');
+  webpush.setVapidDetails(
+    'mailto:vic.assistente.tiago@gmail.com',
+    'BGOSNXNhlNEuYnQdDOWbPFH4r1OUC5EBBo4TBqxeWSZrBWFY6wo7fQmc5RxMbXXaQre7d8EmXt6_4KX-pCFxNEw',
+    'd70RYQWUC55L5hmYoVtLpCxSHomYqXuhJ5yI-7hieI4'
+  );
+  console.log('[helm] web-push enabled');
+} catch { console.log('[helm] web-push not installed — push notifications disabled'); }
+
+const PUSH_SUBS_FILE = path.join(HOME, '.helm', 'push-subscriptions.json');
+let pushSubscriptions = [];
+try { pushSubscriptions = JSON.parse(fs.readFileSync(PUSH_SUBS_FILE, 'utf8')); } catch {}
+
+function savePushSubs() {
+  try { fs.writeFileSync(PUSH_SUBS_FILE, JSON.stringify(pushSubscriptions, null, 2)); } catch {}
+}
+
+function sendPushNotification(title, body, tag) {
+  if (!webpush || !pushSubscriptions.length) return;
+  const payload = JSON.stringify({ title, body, tag });
+  for (const sub of [...pushSubscriptions]) {
+    webpush.sendNotification(sub, payload).catch(err => {
+      console.log('[helm] push failed:', err.statusCode || err.message);
+      // Remove invalid subscriptions (410 = expired)
+      if (err.statusCode === 410 || err.statusCode === 404) {
+        pushSubscriptions = pushSubscriptions.filter(s => s.endpoint !== sub.endpoint);
+        savePushSubs();
+      }
+    });
+  }
+}
 const WAIT_WITH_PROMPT_MS = 3000;   // stable + recognized prompt → waiting
 const WAIT_NO_PROMPT_MS = 8000;     // stable + no prompt → waiting (fallback)
 
@@ -757,6 +792,14 @@ async function buildState() {
       // Generate context summary when transitioning to waiting (fire-and-forget)
       if (st.status === 'waiting') {
         generateWaitSummary(pane.paneId, output, pane.panePath);
+        // Push notification to mobile
+        const taskName = paneTaskNames.get(pane.paneId) || pane.windowName;
+        const projectDir = pane.panePath ? path.basename(pane.panePath) : '';
+        sendPushNotification(
+          '⏸ ' + (projectDir ? projectDir + ' › ' : '') + taskName,
+          'Agente aguardando sua resposta',
+          'helm-wait-' + pane.paneId
+        );
       }
     }
 
@@ -943,6 +986,28 @@ async function handleRequest(req, res) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
     }
+    return;
+  }
+
+  // ── POST /push-subscribe — register push subscription from mobile ──
+  if (req.method === 'POST' && req.url === '/push-subscribe') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const sub = JSON.parse(body);
+        if (!sub.endpoint) { res.writeHead(400); res.end('missing endpoint'); return; }
+        // Deduplicate by endpoint
+        pushSubscriptions = pushSubscriptions.filter(s => s.endpoint !== sub.endpoint);
+        pushSubscriptions.push(sub);
+        savePushSubs();
+        console.log('[helm] push subscription registered:', sub.endpoint.slice(0, 60));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500); res.end(e.message);
+      }
+    });
     return;
   }
 

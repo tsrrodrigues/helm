@@ -10,10 +10,37 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <script>
-// Unregister any leftover service workers — they cause caching issues
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+const VAPID_PUBLIC = 'BGOSNXNhlNEuYnQdDOWbPFH4r1OUC5EBBo4TBqxeWSZrBWFY6wo7fQmc5RxMbXXaQre7d8EmXt6_4KX-pCFxNEw';
+
+async function setupPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return;
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: Uint8Array.from(atob(VAPID_PUBLIC.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0))
+      });
+    }
+    // Send subscription to daemon
+    const proto = location.protocol;
+    const host = location.hostname;
+    await fetch(proto + '//' + host + ':7374/push-subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub.toJSON())
+    });
+    console.log('[helm] Push subscribed');
+  } catch (e) {
+    console.log('[helm] Push setup failed:', e);
+  }
 }
+setupPush();
 </script>
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
