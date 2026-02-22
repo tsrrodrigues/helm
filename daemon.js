@@ -872,6 +872,7 @@ async function handleRequest(req, res) {
   const STATIC_FILES = {
     '/': { file: 'mobile.html', type: 'text/html; charset=utf-8' },
     '/mobile': { file: 'mobile.html', type: 'text/html; charset=utf-8' },
+    '/test': { file: 'test.html', type: 'text/html; charset=utf-8' },
     '/manifest.json': { file: 'manifest.json', type: 'application/manifest+json' },
     '/sw.js': { file: 'sw.js', type: 'application/javascript' },
     '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
