@@ -732,16 +732,27 @@ function stripAnsi(str) {
 }
 
 function formatTermOutput(raw) {
-  // Strip ANSI first, then escape HTML
   const clean = stripAnsi(raw);
-  const lines = clean.split('\n');
+  const lines = clean.split('\n')
+    // Remove Claude Code status bar lines
+    .filter(l => {
+      const t = l.trim();
+      if (!t) return false; // remove empty lines
+      if (/^[─━═\s]+$/.test(t)) return false; // remove separator-only lines
+      if (/^⏵/.test(t)) return false; // status bar
+      if (/bypass permissions on/i.test(t)) return false; // status bar
+      if (/ctrl\+[a-z] to /i.test(t)) return false; // hints
+      if (/esc to interrupt/i.test(t)) return false; // hints
+      if (/shift\+tab to cycle/i.test(t)) return false; // hints
+      return true;
+    });
   
   const formatted = lines.map(line => {
     const trimmed = line.trim();
     const escaped = esc(line);
     
-    // Empty lines
-    if (!trimmed) return '<span class="t-dim">​</span>';
+    // Empty lines (should be filtered already, but just in case)
+    if (!trimmed) return '';
     
     // Claude Code section headers (⏺ Reading..., ⏺ Writing...)
     if (/^⏺/.test(trimmed))
