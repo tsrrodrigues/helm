@@ -619,23 +619,20 @@ ipcMain.handle('create-session', async (_e, name) => {
   }
 
   // Create window 1 with claude and focus on it
-  await runFile('tmux', ['new-window', '-t', safe, '-c', agentCwd], true);
+  const w1 = await runFile('tmux', ['new-window', '-P', '-F', '#{pane_id}', '-t', safe, '-c', agentCwd], true);
   await runFile('tmux', ['send-keys', '-t', `${safe}:1`, 'claude', 'Enter'], true);
   await runFile('tmux', ['select-window', '-t', `${safe}:1`], true);
 
-  // Capture paneId of the new window and save worktree mapping
-  if (agentCwd !== cwd) {
-    const paneIdRes = await runFile('tmux', ['display-message', '-t', `${safe}:1`, '-p', '#{pane_id}'], true);
-    if (paneIdRes.ok && paneIdRes.stdout) {
-      const mapping = readWorktreeMapping();
-      mapping[paneIdRes.stdout] = {
-        worktreePath: agentCwd,
-        branch: `helm/${safe}/1`,
-        repoPath: worktree.getRepoRoot(cwd) || cwd,
-        sessionName: safe
-      };
-      writeWorktreeMapping(mapping);
-    }
+  // Save worktree mapping using paneId from new-window output
+  if (agentCwd !== cwd && w1.ok && w1.stdout) {
+    const mapping = readWorktreeMapping();
+    mapping[w1.stdout] = {
+      worktreePath: agentCwd,
+      branch: `helm/${safe}/1`,
+      repoPath: worktree.getRepoRoot(cwd) || cwd,
+      sessionName: safe
+    };
+    writeWorktreeMapping(mapping);
   }
 
   // Open in WezTerm (as a new tab in the current window)
@@ -682,23 +679,19 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
     }
   }
 
-  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', agentCwd]);
+  const r = await runFile('tmux', ['new-window', '-P', '-F', '#{pane_id}', '-t', sessionName, '-c', agentCwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
 
   // Save worktree mapping if worktree was created
-  if (agentCwd !== cwd && wtBranch) {
-    // Get paneId of the newly created window (last window)
-    const newPaneRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_id}'], true);
-    if (newPaneRes.ok && newPaneRes.stdout) {
-      const mapping = readWorktreeMapping();
-      mapping[newPaneRes.stdout] = {
-        worktreePath: agentCwd,
-        branch: wtBranch,
-        repoPath: repoRoot,
-        sessionName
-      };
-      writeWorktreeMapping(mapping);
-    }
+  if (agentCwd !== cwd && wtBranch && r.stdout) {
+    const mapping = readWorktreeMapping();
+    mapping[r.stdout] = {
+      worktreePath: agentCwd,
+      branch: wtBranch,
+      repoPath: repoRoot,
+      sessionName
+    };
+    writeWorktreeMapping(mapping);
   }
 
   // Focus the WezTerm tab and bring it to front
@@ -730,24 +723,21 @@ ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath
     }
   }
 
-  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', agentCwd]);
+  const r = await runFile('tmux', ['new-window', '-P', '-F', '#{pane_id}', '-t', sessionName, '-c', agentCwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   // Send the fork command to the new window's shell
   await runFile('tmux', ['send-keys', '-t', sessionName, `claude --resume ${claudeSessionId} --fork-session`, 'Enter']);
 
-  // Save worktree mapping
-  if (agentCwd !== cwd && wtBranch) {
-    const newPaneRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_id}'], true);
-    if (newPaneRes.ok && newPaneRes.stdout) {
-      const mapping = readWorktreeMapping();
-      mapping[newPaneRes.stdout] = {
-        worktreePath: agentCwd,
-        branch: wtBranch,
-        repoPath: repoRoot,
-        sessionName
-      };
-      writeWorktreeMapping(mapping);
-    }
+  // Save worktree mapping using paneId from new-window output
+  if (agentCwd !== cwd && wtBranch && r.stdout) {
+    const mapping = readWorktreeMapping();
+    mapping[r.stdout] = {
+      worktreePath: agentCwd,
+      branch: wtBranch,
+      repoPath: repoRoot,
+      sessionName
+    };
+    writeWorktreeMapping(mapping);
   }
 
   // Focus WezTerm tab and bring to front
