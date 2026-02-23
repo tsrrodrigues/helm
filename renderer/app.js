@@ -1255,18 +1255,7 @@ function renderResponseCard(cardEl, agent, front) {
     }
   }
 
-  const actionsHtml = `
-    <div class="rc-actions">
-      <button class="rc-btn" data-action="terminal">Ver no terminal</button>
-      <button class="rc-btn primary" data-action="write">Nova instrução</button>
-    </div>
-    <div class="rc-write">
-      <textarea class="rc-write-input" placeholder="Escreva sua instrução..." rows="1"></textarea>
-      <div class="rc-write-submit">
-        <button class="rc-btn primary" data-action="send">Enviar</button>
-      </div>
-    </div>
-  `;
+  const actionsHtml = '';
 
   cardEl.innerHTML = heroHtml + optionsHtml + contextHtml + kpisHtml + actionsHtml;
 
@@ -1281,53 +1270,8 @@ function renderResponseCard(cardEl, agent, front) {
     });
   }
 
-  // "Ver no terminal" — navigate directly
-  cardEl.querySelector('[data-action="terminal"]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const a = findAgentByPane(cardEl.closest('.row').dataset.pane);
-    if (a) { navigateTo(a); togglePanel(false); if (state.shortcutMode) window.helm.blurWindow(); }
-  });
-
-  // "Nova instrução" — toggle write field
-  cardEl.querySelector('[data-action="write"]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const writeBox = cardEl.querySelector('.rc-write');
-    writeBox.classList.toggle('visible');
-    if (writeBox.classList.contains('visible')) {
-      writeBox.querySelector('.rc-write-input').focus();
-    }
-  });
-
-  // "Enviar" button
-  cardEl.querySelector('[data-action="send"]')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const input = cardEl.querySelector('.rc-write-input');
-    const text = input?.value.trim();
-    if (!text) return;
-    sendResponseToAgent(cardEl.closest('.row').dataset.pane, text);
-  });
-
   // Prevent response card clicks from navigating the row
   cardEl.addEventListener('click', (e) => e.stopPropagation());
-
-  // Textarea: Enter sends, Escape closes write, prevent keyboard shortcut leaking
-  const textarea = cardEl.querySelector('.rc-write-input');
-  if (textarea) {
-    textarea.addEventListener('click', (e) => e.stopPropagation());
-    textarea.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const text = textarea.value.trim();
-        if (text) sendResponseToAgent(cardEl.closest('.row').dataset.pane, text);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        const writeBox = cardEl.querySelector('.rc-write');
-        writeBox.classList.remove('visible');
-        textarea.blur();
-      }
-    });
-  }
 }
 
 function extractKeywords(text) {
