@@ -781,7 +781,6 @@ ipcMain.handle('kill-window', async (_e, paneId) => {
   const mapping = readWorktreeMapping();
   const entry = mapping[paneId];
   if (entry) {
-    worktree.migrateClaudeSessions(entry.worktreePath, entry.repoPath);
     worktree.removeWorktree(entry.repoPath, entry.worktreePath);
     worktree.removeBranch(entry.repoPath, entry.branch);
     delete mapping[paneId];
