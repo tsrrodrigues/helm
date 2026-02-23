@@ -1,7 +1,6 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 const sysEnv = {
   ...process.env,
@@ -133,51 +132,6 @@ function ensureGitignored(repoDir) {
   }
 }
 
-function migrateClaudeSessions(wtPath, mainRepoPath) {
-  const claudeDir = path.join(os.homedir(), '.claude', 'projects');
-  const wtEncoded = wtPath.replace(/\//g, '-');
-  const mainEncoded = mainRepoPath.replace(/\//g, '-');
-  const srcDir = path.join(claudeDir, wtEncoded);
-  const dstDir = path.join(claudeDir, mainEncoded);
-
-  try {
-    if (!fs.existsSync(srcDir)) return;
-    if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
-
-    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
-    for (const entry of entries) {
-      const src = path.join(srcDir, entry.name);
-      const dst = path.join(dstDir, entry.name);
-      if (entry.isFile()) {
-        // Copy file (don't overwrite existing)
-        if (!fs.existsSync(dst)) {
-          fs.copyFileSync(src, dst);
-        }
-      } else if (entry.isDirectory()) {
-        // Copy directory recursively (memory/, session dirs)
-        copyDirSync(src, dst);
-      }
-    }
-    console.log(`[worktree] migrated Claude sessions: ${srcDir} → ${dstDir}`);
-  } catch (e) {
-    console.error('[worktree] migrateClaudeSessions:', e.message);
-  }
-}
-
-function copyDirSync(src, dst) {
-  if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dst, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(s, d);
-    } else {
-      if (!fs.existsSync(d)) fs.copyFileSync(s, d);
-    }
-  }
-}
-
 module.exports = {
   isGitRepo,
   getRepoRoot,
@@ -185,6 +139,5 @@ module.exports = {
   removeWorktree,
   removeBranch,
   listWorktrees,
-  ensureGitignored,
-  migrateClaudeSessions
+  ensureGitignored
 };

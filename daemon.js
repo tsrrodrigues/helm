@@ -1073,7 +1073,6 @@ async function handleRequest(req, res) {
         const wtMapping = readWorktreeMapping();
         const wtEntry = wtMapping[paneId];
         if (wtEntry) {
-          worktree.migrateClaudeSessions(wtEntry.worktreePath, wtEntry.repoPath);
           worktree.removeWorktree(wtEntry.repoPath, wtEntry.worktreePath);
           worktree.removeBranch(wtEntry.repoPath, wtEntry.branch);
           delete wtMapping[paneId];

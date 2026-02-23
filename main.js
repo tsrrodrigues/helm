@@ -761,7 +761,6 @@ ipcMain.handle('kill-session', async (_e, sessionName) => {
   const mapping = readWorktreeMapping();
   for (const [paneId, entry] of Object.entries(mapping)) {
     if (entry.sessionName === sessionName) {
-      worktree.migrateClaudeSessions(entry.worktreePath, entry.repoPath);
       worktree.removeWorktree(entry.repoPath, entry.worktreePath);
       worktree.removeBranch(entry.repoPath, entry.branch);
       delete mapping[paneId];
