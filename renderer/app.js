@@ -896,11 +896,16 @@ function render() {
   reconcileRows();
   renderCreateArea();
 
-  // Position breadcrumb below pill — window is always expanded, use simple offset
+  // Center pill horizontally in window (window is always expanded)
+  const pillW = pill.offsetWidth;
+  if (pillW > 0) {
+    pill.style.left = Math.round((window.innerWidth - pillW) / 2) + 'px';
+  }
+
+  // Position breadcrumb centered below pill
   const bc = $('breadcrumb');
   if (bc && !bc.hidden) {
     const pillLeft = parseInt(pill.style.left) || 0;
-    const pillW = pill.offsetWidth;
     const bcW = bc.offsetWidth;
     bc.style.left = Math.round(pillLeft + (pillW - bcW) / 2) + 'px';
     bc.style.top = ((parseInt(pill.style.top) || 0) + 48) + 'px';
