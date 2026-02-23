@@ -64,7 +64,7 @@ function clearPushPending() {
 }
 const PANE_CLAUDE_SESSIONS_FILE = path.join(HELM_DIR, 'pane-claude-sessions.json');
 
-const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man']);
+const IGNORE_COMMANDS = new Set(['vim', 'nvim', 'less', 'man', 'lazygit']);
 const IDLE_SHELLS = new Set(['bash', 'zsh', 'fish']);
 
 // Agent detection: command name can be a version string (e.g. "2.1.37"),

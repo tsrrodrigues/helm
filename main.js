@@ -621,6 +621,8 @@ ipcMain.handle('create-session', async (_e, name) => {
   // Create window 1 with claude and focus on it
   const w1 = await runFile('tmux', ['new-window', '-P', '-F', '#{pane_id}', '-t', safe, '-c', agentCwd], true);
   await runFile('tmux', ['send-keys', '-t', `${safe}:1`, 'claude', 'Enter'], true);
+  await runFile('tmux', ['split-window', '-h', '-t', w1.stdout, '-p', '30', '-c', agentCwd, 'lazygit'], true);
+  await runFile('tmux', ['select-pane', '-t', w1.stdout], true);
   await runFile('tmux', ['select-window', '-t', `${safe}:1`], true);
 
   // Save worktree mapping using paneId from new-window output
@@ -681,6 +683,8 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
 
   const r = await runFile('tmux', ['new-window', '-P', '-F', '#{pane_id}', '-t', sessionName, '-c', agentCwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+  await runFile('tmux', ['split-window', '-h', '-t', r.stdout, '-p', '30', '-c', agentCwd, 'lazygit'], true);
+  await runFile('tmux', ['select-pane', '-t', r.stdout], true);
 
   // Save worktree mapping if worktree was created
   if (agentCwd !== cwd && wtBranch && r.stdout) {
@@ -727,6 +731,8 @@ ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   // Send the fork command to the new window's shell
   await runFile('tmux', ['send-keys', '-t', sessionName, `claude --resume ${claudeSessionId} --fork-session`, 'Enter']);
+  await runFile('tmux', ['split-window', '-h', '-t', r.stdout, '-p', '30', '-c', agentCwd, 'lazygit'], true);
+  await runFile('tmux', ['select-pane', '-t', r.stdout], true);
 
   // Save worktree mapping using paneId from new-window output
   if (agentCwd !== cwd && wtBranch && r.stdout) {
