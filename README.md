@@ -18,7 +18,20 @@ npm run service       # instala LaunchAgent + inicia automaticamente no login
 npm run service-stop  # para e remove o serviço
 ```
 
-O serviço roda via macOS LaunchAgent (`com.helm.app`), com `RunAtLoad` e `KeepAlive`. Logs em `~/.helm/logs/`.
+O serviço roda via macOS LaunchAgent (`com.helm.app`), com `RunAtLoad` e `KeepAlive`.
+Logs em `~/.helm/logs/helm.log` e `~/.helm/logs/helm.err`.
+
+Comandos manuais do `launchctl` (equivalentes):
+```bash
+# Parar
+launchctl bootout gui/$(id -u)/com.helm.app
+
+# Iniciar
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.helm.app.plist
+
+# Reiniciar
+launchctl kickstart -k gui/$(id -u)/com.helm.app
+```
 
 ### Manual (terminal)
 ```bash
