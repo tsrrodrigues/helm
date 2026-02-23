@@ -1103,8 +1103,8 @@ function createAgentRowV5(agent, front) {
     <div class="ar-confirm-delete">deletar ${confirmType}? <button class="confirm-yes">sim</button> <button class="confirm-no">não</button></div>
   `;
 
-  // Populate response card if expanded
-  if (isExpanded) {
+  // Populate response card if expanded and waiting
+  if (isExpanded && isWait) {
     renderResponseCard(row.querySelector('.response-card'), agent, front);
   }
 
@@ -1207,10 +1207,10 @@ function patchAgentRowV5(row, agent, front) {
   const timeEl = row.querySelector('.r-time');
   if (timeEl) setText(timeEl, formatElapsed(agent.interactionStartedAt));
 
-  // Update response card
+  // Update response card (only for waiting agents)
   const cardEl = row.querySelector('.response-card');
   if (cardEl) {
-    if (isExpanded) {
+    if (isExpanded && isWait) {
       // Re-render if card is empty (first expand) or responseCard data changed
       const prevType = cardEl.dataset.rcType || '';
       const prevHero = cardEl.dataset.rcHero || '';
