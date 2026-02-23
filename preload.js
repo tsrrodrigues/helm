@@ -3,8 +3,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('helm', {
   getLayout: () => ipcRenderer.sendSync('get-layout'),
   recalculateBounds: () => ipcRenderer.sendSync('recalculate-bounds'),
-  expandToPanel: (pillWidth) => ipcRenderer.sendSync('expand-to-panel', pillWidth),
-  collapseToPill: (pillWidth) => ipcRenderer.sendSync('collapse-to-pill', pillWidth),
   navigateToPane: (sessionName, windowName, paneId, weztermTabId) =>
     ipcRenderer.send('navigate-to-pane', sessionName, windowName, paneId, weztermTabId),
   confirmName: (sessionName, name) => ipcRenderer.send('confirm-name', sessionName, name),
@@ -26,10 +24,10 @@ contextBridge.exposeInMainWorld('helm', {
   killWindow: (paneId) => ipcRenderer.invoke('kill-window', paneId),
   renameAgent: (paneId) => ipcRenderer.invoke('rename-agent', paneId),
   manualRenameAgent: (paneId, name) => ipcRenderer.invoke('manual-rename-agent', paneId, name),
-  resizePill: (pillWidth) => ipcRenderer.send('resize-pill', pillWidth),
   forkSession: (sessionName, claudeSessionId, panePath, weztermTabId) =>
     ipcRenderer.invoke('fork-session', sessionName, claudeSessionId, panePath, weztermTabId),
   sendKeys: (paneId, text) => ipcRenderer.invoke('send-keys', paneId, text),
+  listWorktrees: () => ipcRenderer.invoke('list-worktrees'),
   debugLog: (msg) => ipcRenderer.send('debug-log', msg),
   updateWatermark: (data) => ipcRenderer.send('update-watermark', data)
 });

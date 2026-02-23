@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const WebSocket = require('ws');
+const worktree = require('./worktree');
 
 const PORT = 7373;
 const POLL_MS = 5000;
@@ -14,6 +15,7 @@ const HELM_DIR = path.join(HOME, '.helm');
 const NAMES_FILE = path.join(HELM_DIR, 'session-names.json');
 const CONFIRMED_FILE = path.join(HELM_DIR, 'confirmed-names.json');
 const PANE_TASKS_FILE = path.join(HELM_DIR, 'pane-tasks.json');
+const PANE_WORKTREES_FILE = path.join(HELM_DIR, 'pane-worktrees.json');
 
 // ── Push notifications ────────────────────────────────────────────────────
 let webpush = null;
@@ -169,6 +171,27 @@ function savePaneClaudeSessions() {
   const obj = {};
   for (const [k, v] of paneClaudeSessionIds) obj[k] = v;
   writeJson(PANE_CLAUDE_SESSIONS_FILE, obj);
+}
+
+function readWorktreeMapping() { return readJson(PANE_WORKTREES_FILE); }
+function writeWorktreeMapping(data) { writeJson(PANE_WORKTREES_FILE, data); }
+
+// Startup cleanup: remove orphaned entries from pane-worktrees.json
+async function cleanupOrphanedWorktreeEntries() {
+  const mapping = readWorktreeMapping();
+  if (!Object.keys(mapping).length) return;
+  const panes = await listTmuxPanes();
+  if (!panes) return;
+  const activePaneIds = new Set(panes.map(p => p.paneId));
+  let changed = false;
+  for (const paneId of Object.keys(mapping)) {
+    if (!activePaneIds.has(paneId)) {
+      console.log(`[helm] removing orphaned worktree mapping: ${paneId}`);
+      delete mapping[paneId];
+      changed = true;
+    }
+  }
+  if (changed) writeWorktreeMapping(mapping);
 }
 
 // Fallback: resolve Claude Code session ID from filesystem when hook hasn't provided it
@@ -749,6 +772,7 @@ async function buildState() {
     }
   }
 
+  const wtMapping = readWorktreeMapping();
   const frontsMap = new Map();
   for (const pane of panes) {
     // Skip capturePane for idle shells — no useful output to capture
@@ -826,6 +850,7 @@ async function buildState() {
     const lines = output.split('\n').filter(Boolean);
     const lastOutput = (lines[lines.length - 1] || '').trim().slice(0, 140);
 
+    const wtEntry = wtMapping[pane.paneId];
     frontsMap.get(pane.sessionName).agents.push({
       paneId: pane.paneId,
       windowName: pane.windowName,
@@ -837,6 +862,7 @@ async function buildState() {
       waitingSummary: st.status === 'waiting' ? (paneWaitSummaries.get(pane.paneId) || null) : null,
       interactionStartedAt: interactionStart.get(pane.paneId) || null,
       panePath: pane.panePath,
+      worktreeBranch: wtEntry?.branch || null,
       claudeSessionId: paneClaudeSessionIds.get(pane.paneId) || resolveClaudeSessionFromFs(pane.panePath),
       responseCard: paneResponseCards.get(pane.paneId) || null
     });
@@ -844,10 +870,12 @@ async function buildState() {
 
   const fronts = [...frontsMap.values()].map(f => {
     // Derive projectDir from the most frequent panePath basename (agents + editors)
+    // For worktree agents, use the real repo path instead of the worktree path
     const pathCounts = {};
     for (const a of [...f.agents, ...f.editorPanes]) {
       if (a.panePath) {
-        const dir = path.basename(a.panePath);
+        const wt = wtMapping[a.paneId];
+        const dir = wt ? path.basename(wt.repoPath) : path.basename(a.panePath);
         pathCounts[dir] = (pathCounts[dir] || 0) + 1;
       }
     }
@@ -1041,6 +1069,17 @@ async function handleRequest(req, res) {
       try {
         const { paneId } = JSON.parse(body);
         if (!paneId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'missing paneId' })); return; }
+        // Cleanup worktree for this pane
+        const wtMapping = readWorktreeMapping();
+        const wtEntry = wtMapping[paneId];
+        if (wtEntry) {
+          worktree.migrateClaudeSessions(wtEntry.worktreePath, wtEntry.repoPath);
+          worktree.removeWorktree(wtEntry.repoPath, wtEntry.worktreePath);
+          worktree.removeBranch(wtEntry.repoPath, wtEntry.branch);
+          delete wtMapping[paneId];
+          writeWorktreeMapping(wtMapping);
+          console.log(`[helm] worktree cleaned up: ${wtEntry.worktreePath}`);
+        }
         // Kill the tmux window containing this pane
         const result = await execCmd('tmux', ['kill-window', '-t', paneId]);
         // Clean up state
@@ -1320,6 +1359,7 @@ console.log('API server on :7374 (mobile: /, debug: /debug)');
 ensureFiles();
 loadPaneTasks();
 loadPaneClaudeSessions();
+cleanupOrphanedWorktreeEntries().catch(e => console.error('[helm] worktree cleanup:', e.message));
 // Use setTimeout loop (not setInterval) to prevent tick overlap when tick takes >POLL_MS
 (async function tickLoop() {
   await tick();

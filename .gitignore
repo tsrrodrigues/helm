@@ -2,3 +2,4 @@ node_modules/
 desktop-check.png
 package-lock.json
 scripts/
+.worktrees/

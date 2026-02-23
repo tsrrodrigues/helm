@@ -5,6 +5,7 @@ const os = require('os');
 const net = require('net');
 const { execFile } = require('child_process');
 const WebSocket = require('ws');
+const worktree = require('./worktree');
 
 // Ignore EPIPE on stdout/stderr — happens when launched via `open` and the
 // parent pipe disappears.  Without this, any console.log can crash the app.
@@ -16,7 +17,6 @@ let win;
 let watermarkWin;
 let daemonSocket;
 let latestState = { fronts: [], activePane: null, summary: { total: 0, totalAgents: 0, waiting: 0, oldestWaiting: null } };
-let isExpanded = false;
 let lastWatermarkData = { glyph: null, colorIdx: 0 };
 let isWezterm = false;
 
@@ -65,6 +65,10 @@ const helmDir = path.join(os.homedir(), '.helm');
 const namesFile = path.join(helmDir, 'session-names.json');
 const pillPosFile = path.join(helmDir, 'pill-position.json');
 const helmNotifierBin = path.join(helmDir, 'HelmAlert.app', 'Contents', 'MacOS', 'terminal-notifier');
+const paneWorktreesFile = path.join(helmDir, 'pane-worktrees.json');
+
+function readWorktreeMapping() { return readJson(paneWorktreesFile); }
+function writeWorktreeMapping(data) { writeJson(paneWorktreesFile, data); }
 
 const sysEnv = {
   ...process.env,
@@ -298,16 +302,15 @@ function computeExpandedBounds(pillX, pillY, actualPillW) {
 
 function createWindow() {
   const pos = loadPillPosition();
-  // Start collapsed at pill size
-  // Start collapsed at pill size — minimal GPU/WindowServer compositing
-  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
-  isExpanded = false;
+  // Window is always at expanded size — toggle is CSS-only (no resize = no flash)
+  const { winBounds, layout } = computeExpandedBounds(pos.x, pos.y);
+  currentLayout = layout;
 
   win = new BrowserWindow({
-    width: PILL_W,
-    height: PILL_H,
-    x: pos.x,
-    y: pos.y,
+    width: winBounds.width,
+    height: winBounds.height,
+    x: winBounds.x,
+    y: winBounds.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -335,18 +338,9 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer/index.html'));
 
-  win.once('ready-to-show', async () => {
+  win.once('ready-to-show', () => {
     // Start with passthrough — renderer toggles on hover via elementFromPoint
     win.setIgnoreMouseEvents(true, { forward: true });
-    // Resize window to match actual pill width and re-center
-    try {
-      const pillW = await win.webContents.executeJavaScript("document.getElementById('pill').offsetWidth");
-      if (pillW && pillW > 0) {
-        const { workArea } = screen.getPrimaryDisplay();
-        const cx = workArea.x + Math.round((workArea.width - pillW) / 2);
-        win.setBounds({ x: cx, y: win.getBounds().y, width: pillW, height: PILL_H }, false);
-      }
-    } catch {}
     win.show();
   });
 
@@ -477,7 +471,7 @@ ipcMain.on('get-layout', (e) => {
   e.returnValue = currentLayout;
 });
 
-// Recalculate bounds after drag — handles both collapsed and expanded states
+// Recalculate bounds after drag — window is always at expanded size
 ipcMain.on('recalculate-bounds', (e) => {
   if (!win || win.isDestroyed()) { e.returnValue = null; return; }
 
@@ -485,61 +479,10 @@ ipcMain.on('recalculate-bounds', (e) => {
   const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
   const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
 
-  if (!isExpanded) {
-    // Collapsed: just keep pill-sized window at current position
-    currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
-    e.returnValue = currentLayout;
-    return;
-  }
-
   const { winBounds, layout } = computeExpandedBounds(pillX, pillY);
   currentLayout = layout;
   win.setBounds(winBounds, false);
   e.returnValue = layout;
-});
-
-// Expand window to panel size (called when panel opens)
-ipcMain.on('expand-to-panel', (e, actualPillW) => {
-  if (!win || win.isDestroyed()) { e.returnValue = null; return; }
-
-  const [wx, wy] = win.getPosition();
-  const pillX = wx + (currentLayout ? currentLayout.pillOffsetX : 0);
-  const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
-
-  const { winBounds, layout } = computeExpandedBounds(pillX, pillY, actualPillW);
-  currentLayout = layout;
-  isExpanded = true;
-
-  win.setBounds(winBounds, false);
-  e.returnValue = layout;
-});
-
-// Collapse window to pill size (called when panel closes)
-ipcMain.on('collapse-to-pill', (e, actualPillW) => {
-  if (!win || win.isDestroyed()) { e.returnValue = null; return; }
-
-  const [wx, wy] = win.getPosition();
-  const pillY = wy + (currentLayout ? currentLayout.pillOffsetY : 0);
-
-  const pillW = actualPillW || PILL_W;
-  // Always re-center horizontally on screen (pill width may have changed during expansion)
-  const { workArea } = screen.getPrimaryDisplay();
-  const pillX = workArea.x + Math.round((workArea.width - pillW) / 2);
-
-  currentLayout = { pillOffsetX: 0, pillOffsetY: 0, panelOffsetX: 0, panelOffsetY: 0, panelW: PANEL_W, panelH: 0 };
-  isExpanded = false;
-
-  win.setBounds({ x: pillX, y: pillY, width: pillW, height: PILL_H }, false);
-  e.returnValue = currentLayout;
-});
-
-// Resize collapsed pill window, always re-centering on screen
-ipcMain.on('resize-pill', (_e, newPillW) => {
-  if (!win || win.isDestroyed() || isExpanded) return;
-  const { workArea } = screen.getPrimaryDisplay();
-  const cx = workArea.x + Math.round((workArea.width - newPillW) / 2);
-  const [, wy] = win.getPosition();
-  win.setBounds({ x: cx, y: wy, width: newPillW, height: PILL_H }, false);
 });
 
 ipcMain.on('move-window', (_e, dx, dy) => {
@@ -660,13 +603,40 @@ ipcMain.handle('create-session', async (_e, name) => {
   const r = await runFile('tmux', ['new-session', '-d', '-s', safe, '-c', cwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
 
-  // Start nvim in window 0
+  // Start nvim in window 0 (stays in original repo)
   await runFile('tmux', ['send-keys', '-t', `${safe}:0`, 'nvim', 'Enter'], true);
 
+  // Create worktree for window 1 (agent) if cwd is a git repo
+  let agentCwd = cwd;
+  if (worktree.isGitRepo(cwd)) {
+    const repoRoot = worktree.getRepoRoot(cwd) || cwd;
+    const branch = `helm/${safe}/1`;
+    const wt = worktree.createWorktree(repoRoot, branch);
+    if (wt.ok) {
+      agentCwd = wt.worktreePath;
+      console.log(`[helm] worktree created: ${wt.worktreePath} (branch: ${wt.branch})`);
+    }
+  }
+
   // Create window 1 with claude and focus on it
-  await runFile('tmux', ['new-window', '-t', safe, '-c', cwd], true);
+  await runFile('tmux', ['new-window', '-t', safe, '-c', agentCwd], true);
   await runFile('tmux', ['send-keys', '-t', `${safe}:1`, 'claude', 'Enter'], true);
   await runFile('tmux', ['select-window', '-t', `${safe}:1`], true);
+
+  // Capture paneId of the new window and save worktree mapping
+  if (agentCwd !== cwd) {
+    const paneIdRes = await runFile('tmux', ['display-message', '-t', `${safe}:1`, '-p', '#{pane_id}'], true);
+    if (paneIdRes.ok && paneIdRes.stdout) {
+      const mapping = readWorktreeMapping();
+      mapping[paneIdRes.stdout] = {
+        worktreePath: agentCwd,
+        branch: `helm/${safe}/1`,
+        repoPath: worktree.getRepoRoot(cwd) || cwd,
+        sessionName: safe
+      };
+      writeWorktreeMapping(mapping);
+    }
+  }
 
   // Open in WezTerm (as a new tab in the current window)
   if (weztermBin) {
@@ -690,8 +660,46 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
   // Get the current path of the active pane in this session
   const pathRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_current_path}'], true);
   const cwd = pathRes.ok && pathRes.stdout ? pathRes.stdout : os.homedir();
-  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', cwd]);
+
+  // Create worktree for new agent window if cwd is a git repo
+  let agentCwd = cwd;
+  let wtBranch = null;
+  let repoRoot = null;
+  if (worktree.isGitRepo(cwd)) {
+    repoRoot = worktree.getRepoRoot(cwd) || cwd;
+    // Determine window index by counting existing windows
+    const listRes = await runFile('tmux', ['list-windows', '-t', sessionName, '-F', '#{window_index}'], true);
+    const windowCount = listRes.ok ? listRes.stdout.split('\n').filter(Boolean).length : 1;
+    const windowIdx = windowCount; // new window will be at this index
+    wtBranch = `helm/${sessionName}/${windowIdx}`;
+    const wt = worktree.createWorktree(repoRoot, wtBranch);
+    if (wt.ok) {
+      agentCwd = wt.worktreePath;
+      wtBranch = wt.branch;
+      console.log(`[helm] worktree created: ${wt.worktreePath} (branch: ${wt.branch})`);
+    } else {
+      wtBranch = null;
+    }
+  }
+
+  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', agentCwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
+
+  // Save worktree mapping if worktree was created
+  if (agentCwd !== cwd && wtBranch) {
+    // Get paneId of the newly created window (last window)
+    const newPaneRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_id}'], true);
+    if (newPaneRes.ok && newPaneRes.stdout) {
+      const mapping = readWorktreeMapping();
+      mapping[newPaneRes.stdout] = {
+        worktreePath: agentCwd,
+        branch: wtBranch,
+        repoPath: repoRoot,
+        sessionName
+      };
+      writeWorktreeMapping(mapping);
+    }
+  }
 
   // Focus the WezTerm tab and bring it to front
   if (weztermTabId != null && weztermBin) {
@@ -704,10 +712,44 @@ ipcMain.handle('create-window', async (_e, sessionName, weztermTabId) => {
 ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath, weztermTabId) => {
   if (!sessionName || !claudeSessionId) return { ok: false, error: 'missing sessionName or claudeSessionId' };
   const cwd = panePath || os.homedir();
-  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', cwd]);
+
+  // Create worktree for forked session
+  let agentCwd = cwd;
+  let wtBranch = null;
+  let repoRoot = null;
+  if (worktree.isGitRepo(cwd)) {
+    repoRoot = worktree.getRepoRoot(cwd) || cwd;
+    wtBranch = `helm/${sessionName}/fork-${Date.now()}`;
+    const wt = worktree.createWorktree(repoRoot, wtBranch);
+    if (wt.ok) {
+      agentCwd = wt.worktreePath;
+      wtBranch = wt.branch;
+      console.log(`[helm] fork worktree created: ${wt.worktreePath} (branch: ${wt.branch})`);
+    } else {
+      wtBranch = null;
+    }
+  }
+
+  const r = await runFile('tmux', ['new-window', '-t', sessionName, '-c', agentCwd]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   // Send the fork command to the new window's shell
   await runFile('tmux', ['send-keys', '-t', sessionName, `claude --resume ${claudeSessionId} --fork-session`, 'Enter']);
+
+  // Save worktree mapping
+  if (agentCwd !== cwd && wtBranch) {
+    const newPaneRes = await runFile('tmux', ['display-message', '-t', sessionName, '-p', '#{pane_id}'], true);
+    if (newPaneRes.ok && newPaneRes.stdout) {
+      const mapping = readWorktreeMapping();
+      mapping[newPaneRes.stdout] = {
+        worktreePath: agentCwd,
+        branch: wtBranch,
+        repoPath: repoRoot,
+        sessionName
+      };
+      writeWorktreeMapping(mapping);
+    }
+  }
+
   // Focus WezTerm tab and bring to front
   if (weztermTabId != null && weztermBin) {
     await runFile(weztermBin, ['cli', 'activate-tab', '--tab-id', String(weztermTabId)], true);
@@ -718,6 +760,20 @@ ipcMain.handle('fork-session', async (_e, sessionName, claudeSessionId, panePath
 
 ipcMain.handle('kill-session', async (_e, sessionName) => {
   if (!sessionName) return { ok: false, error: 'missing sessionName' };
+
+  // Cleanup worktrees for all panes in this session
+  const mapping = readWorktreeMapping();
+  for (const [paneId, entry] of Object.entries(mapping)) {
+    if (entry.sessionName === sessionName) {
+      worktree.migrateClaudeSessions(entry.worktreePath, entry.repoPath);
+      worktree.removeWorktree(entry.repoPath, entry.worktreePath);
+      worktree.removeBranch(entry.repoPath, entry.branch);
+      delete mapping[paneId];
+      console.log(`[helm] worktree cleaned up: ${entry.worktreePath}`);
+    }
+  }
+  writeWorktreeMapping(mapping);
+
   const r = await runFile('tmux', ['kill-session', '-t', sessionName]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   return { ok: true };
@@ -725,6 +781,19 @@ ipcMain.handle('kill-session', async (_e, sessionName) => {
 
 ipcMain.handle('kill-window', async (_e, paneId) => {
   if (!paneId) return { ok: false, error: 'missing paneId' };
+
+  // Cleanup worktree for this pane
+  const mapping = readWorktreeMapping();
+  const entry = mapping[paneId];
+  if (entry) {
+    worktree.migrateClaudeSessions(entry.worktreePath, entry.repoPath);
+    worktree.removeWorktree(entry.repoPath, entry.worktreePath);
+    worktree.removeBranch(entry.repoPath, entry.branch);
+    delete mapping[paneId];
+    writeWorktreeMapping(mapping);
+    console.log(`[helm] worktree cleaned up: ${entry.worktreePath}`);
+  }
+
   const r = await runFile('tmux', ['kill-window', '-t', String(paneId)]);
   if (!r.ok) return { ok: false, error: r.stderr || r.error?.message };
   return { ok: true };
@@ -743,4 +812,8 @@ ipcMain.handle('manual-rename-agent', async (_e, paneId, name) => {
 ipcMain.handle('send-keys', async (_e, paneId, text) => {
   if (!paneId || text == null) return { ok: false, error: 'missing paneId or text' };
   return daemonPost('/send-keys', { paneId, text }, 10000);
+});
+
+ipcMain.handle('list-worktrees', () => {
+  return readWorktreeMapping();
 });

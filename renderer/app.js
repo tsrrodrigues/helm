@@ -14,6 +14,8 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+
 const pill       = $('pill');
 const panel      = $('panel');
 const rowsEl     = $('rows');
@@ -319,10 +321,7 @@ function togglePanel(force) {
   if (wantOpen === state.open || _animating) return;
 
   if (wantOpen) {
-    // ── OPEN — expand window, then fade in panel ──
-    const layout = window.helm.expandToPanel(pill.offsetWidth);
-    if (layout) { state.layout = layout; applyLayout(); }
-
+    // ── OPEN — CSS-only fade in (window stays at expanded size) ──
     state.open = true;
     panel.classList.remove('closing', 'visible');
 
@@ -350,7 +349,7 @@ function togglePanel(force) {
       panel.classList.add('visible');
     });
   } else {
-    // ── CLOSE — fade out panel, then collapse window ──
+    // ── CLOSE — CSS-only fade out (window stays at expanded size) ──
     _animating = true;
     panel.classList.remove('visible');
     panel.classList.add('closing');
@@ -366,10 +365,6 @@ function togglePanel(force) {
       state.creatingSession = false;
       state.confirmingDelete = null;
       render();
-
-      // Collapse window to pill size — reduces GPU/WindowServer compositing area ~95%
-      const layout = window.helm.collapseToPill(pill.offsetWidth);
-      if (layout) { state.layout = layout; applyLayout(); }
     };
 
     panel.addEventListener('transitionend', function onEnd(e) {
@@ -881,6 +876,7 @@ function render() {
 
   // Active glyph — shows which agent is in the current terminal
   renderActiveGlyph();
+  renderBreadcrumb();
 
   setText($('sum-fronts'), String(state.data.summary?.total || 0));
   setText($('sum-agents'), String(state.data.summary?.totalAgents || 0));
@@ -900,13 +896,14 @@ function render() {
   reconcileRows();
   renderCreateArea();
 
-  // Re-center collapsed pill when its width changes
-  if (!state.open) {
-    const newW = pill.offsetWidth;
-    if (newW > 0 && newW !== state._lastPillW) {
-      state._lastPillW = newW;
-      window.helm.resizePill(newW);
-    }
+  // Position breadcrumb below pill — window is always expanded, use simple offset
+  const bc = $('breadcrumb');
+  if (bc && !bc.hidden) {
+    const pillLeft = parseInt(pill.style.left) || 0;
+    const pillW = pill.offsetWidth;
+    const bcW = bc.offsetWidth;
+    bc.style.left = Math.round(pillLeft + (pillW - bcW) / 2) + 'px';
+    bc.style.top = ((parseInt(pill.style.top) || 0) + 48) + 'px';
   }
 }
 
@@ -963,6 +960,55 @@ function renderActiveGlyph() {
   const colorIdx = projectColor(activeFront.projectDir);
   const glyph = glyphForAgent(activeAgent.paneId);
   window.helm.updateWatermark({ glyph, colorIdx });
+}
+
+// ── Breadcrumb (current agent indicator below pill) ──────────────────────
+
+function renderBreadcrumb() {
+  const bc = $('breadcrumb');
+  if (!bc) return;
+
+  // Find selected agent (or fall back to active pane)
+  let agent = state.selectedPane;
+  let front = null;
+  if (agent) {
+    for (const f of (state.data.fronts || [])) {
+      if (f.agents.some(a => a.paneId === agent.paneId)) { front = f; break; }
+    }
+  }
+  if (!agent || !front) {
+    const activePane = getActivePane();
+    for (const f of (state.data.fronts || [])) {
+      for (const a of f.agents) {
+        if (a.paneId === activePane) { agent = a; front = f; break; }
+      }
+      if (agent) break;
+    }
+  }
+
+  if (!agent || !front) {
+    bc.hidden = true;
+    return;
+  }
+
+  bc.hidden = false;
+
+  const colorIdx = projectColor(front.projectDir);
+  const glyph = glyphForAgent(agent.paneId);
+  const isWait = agent.status === 'waiting';
+  const taskName = agent.task || '';
+
+  const glyphEl = $('bc-glyph');
+  glyphEl.textContent = glyph;
+  for (let i = 0; i < 6; i++) glyphEl.classList.toggle(`g-${i}`, i === colorIdx);
+
+  const sessEl = $('bc-session');
+  setText(sessEl, front.sessionName);
+  for (let i = 0; i < 6; i++) sessEl.classList.toggle(`c-${i}`, i === colorIdx);
+  setText($('bc-agent'), taskName || front.sessionName);
+
+  const statusEl = $('bc-status');
+  statusEl.className = 'bc-status ' + (isWait ? 'wait' : 'run');
 }
 
 // ── Flat rows reconciler ─────────────────────────────────────────────────
@@ -1033,16 +1079,17 @@ function createAgentRowV5(agent, front) {
   const numBadge = agentNum ? `<span class="g-num">${agentNum}</span>` : '';
   const taskName = agent.task || '';
   const taskSepStyle = taskName ? '' : ' style="display:none"';
+  const branchLabel = agent.worktreeBranch ? agent.worktreeBranch.split('/').pop() : '';
+  const branchHtml = branchLabel ? `<span class="r-branch" title="${escapeHtml(agent.worktreeBranch)}">⎇ ${escapeHtml(branchLabel)}</span>` : '<span class="r-branch"></span>';
   const taskHtml = `<span class="r-sep"${taskSepStyle}>\u203A</span><span class="r-task">${escapeHtml(taskName)}</span>`;
 
   row.innerHTML = `
     <div class="glyph g-${colorIdx}">${numBadge}${glyph}<span class="sdot ${sdotClass}"></span></div>
     <div class="r-body">
       <div class="r-main">
-        <span class="r-session">${escapeHtml(front.sessionName)}</span>
-        <span class="r-sep">\u203A</span>
         <span class="r-project c-${colorIdx}">${escapeHtml(projectName)}</span>
         ${taskHtml}
+        ${branchHtml}
         <span class="r-time">${formatElapsed(agent.interactionStartedAt)}</span>
       </div>
       <div class="response-card"></div>
@@ -1122,10 +1169,6 @@ function patchAgentRowV5(row, agent, front) {
   const sdot = row.querySelector('.sdot');
   if (sdot) sdot.className = `sdot ${isWait ? 'wait' : 'run'}`;
 
-  // Update session name
-  const sessEl = row.querySelector('.r-session');
-  if (sessEl) setText(sessEl, front.sessionName);
-
   // Update project name
   const projEl = row.querySelector('.r-project');
   if (projEl) {
@@ -1142,10 +1185,17 @@ function patchAgentRowV5(row, agent, front) {
       const taskName = agent.task || '';
       setText(taskEl, taskName);
       // Show/hide separator before task name
-      const seps = row.querySelectorAll('.r-sep');
-      const taskSep = seps.length > 1 ? seps[1] : null;
+      const taskSep = row.querySelector('.r-sep');
       if (taskSep) taskSep.style.display = taskName ? '' : 'none';
     }
+  }
+
+  // Update branch indicator
+  const branchEl = row.querySelector('.r-branch');
+  if (branchEl) {
+    const branchLabel = agent.worktreeBranch ? agent.worktreeBranch.split('/').pop() : '';
+    setText(branchEl, branchLabel ? `⎇ ${branchLabel}` : '');
+    if (agent.worktreeBranch) branchEl.title = agent.worktreeBranch;
   }
 
   // Update time
