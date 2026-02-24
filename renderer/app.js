@@ -155,6 +155,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'N' && state.shortcutMode && state.open) {
     e.preventDefault();
     startCreateSession();
+  } else if (e.key === 'l' && state.shortcutMode && state.selectedPane && state.open) {
+    e.preventDefault();
+    toggleLazygitForSelected();
   } else if (e.key === 'v' && state.shortcutMode && state.open) {
     e.preventDefault();
     navigateToEditor();
@@ -731,6 +734,13 @@ function navigateToEditor() {
   }
 }
 
+// ── Toggle lazygit sidebar ────────────────────────────────────────────────
+
+function toggleLazygitForSelected() {
+  if (!state.selectedPane) return;
+  window.helm.toggleLazygit(state.selectedPane.paneId);
+}
+
 // ── Create session ────────────────────────────────────────────────────────
 
 function startCreateSession() {
@@ -888,7 +898,7 @@ function render() {
     if (state.confirmingDelete) {
       setText(hint, 'Enter/y confirmar · Esc/n cancelar');
     } else {
-      setText(hint, 'j/k navegar · Enter ir · Ctrl+N opção · x dispensar · r/R renomear · f fork · v nvim · n window · d/D deletar · N sessão');
+      setText(hint, 'j/k navegar · Enter ir · Ctrl+N opção · x dispensar · r/R renomear · f fork · v nvim · l lazygit · n window · d/D deletar · N sessão');
     }
   }
 

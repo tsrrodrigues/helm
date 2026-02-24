@@ -793,6 +793,37 @@ ipcMain.handle('kill-window', async (_e, paneId) => {
   return { ok: true };
 });
 
+ipcMain.handle('toggle-lazygit', async (_e, paneId) => {
+  if (!paneId) return { ok: false, error: 'missing paneId' };
+
+  // List panes in the same window as the agent pane
+  const listRes = await runFile('tmux', [
+    'list-panes', '-t', String(paneId), '-F', '#{pane_id}\t#{pane_current_command}'
+  ], true);
+  if (!listRes.ok) return { ok: false, error: 'failed to list panes' };
+
+  const panes = listRes.stdout.split('\n').filter(Boolean).map(l => {
+    const [id, cmd] = l.split('\t');
+    return { id, cmd: (cmd || '').trim().toLowerCase() };
+  });
+
+  const lgPane = panes.find(p => p.cmd === 'lazygit');
+
+  if (lgPane) {
+    // Lazygit exists → kill it
+    const r = await runFile('tmux', ['kill-pane', '-t', lgPane.id], true);
+    return { ok: r.ok, visible: false };
+  } else {
+    // Lazygit doesn't exist → create split
+    const r = await runFile('tmux', [
+      'split-window', '-h', '-t', String(paneId), '-p', '30', '-l', '30%', 'lazygit'
+    ], true);
+    // Refocus the agent pane
+    await runFile('tmux', ['select-pane', '-t', String(paneId)], true);
+    return { ok: r.ok, visible: true };
+  }
+});
+
 ipcMain.handle('rename-agent', async (_e, paneId) => {
   if (!paneId) return { ok: false, error: 'missing paneId' };
   return daemonPost('/rename-agent', { paneId }, 30000);

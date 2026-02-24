@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('helm', {
   forkSession: (sessionName, claudeSessionId, panePath, weztermTabId) =>
     ipcRenderer.invoke('fork-session', sessionName, claudeSessionId, panePath, weztermTabId),
   sendKeys: (paneId, text) => ipcRenderer.invoke('send-keys', paneId, text),
+  toggleLazygit: (paneId) => ipcRenderer.invoke('toggle-lazygit', paneId),
   listWorktrees: () => ipcRenderer.invoke('list-worktrees'),
   debugLog: (msg) => ipcRenderer.send('debug-log', msg),
   updateWatermark: (data) => ipcRenderer.send('update-watermark', data)
